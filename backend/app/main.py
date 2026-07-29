@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Callable
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Query, Request
@@ -34,6 +34,7 @@ from app.api_models import (
     StockResponse,
     StockSearchResponse,
     ValidationIssue,
+    camelize_key,
 )
 from app.indicators import (
     IndicatorBundle,
@@ -56,6 +57,12 @@ from app.scoring import (
 )
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+class ExchangeCalendar(Protocol):
+    def is_trading_day(self, day: date) -> bool: ...
+
+    def latest_trading_day(self, on_or_before: date) -> date | None: ...
 
 
 class ApiProblem(Exception):
@@ -83,6 +90,7 @@ def create_app(
     database: Database | None = None,
     market_gateway: MarketGateway | None = None,
     now_provider: Callable[[], datetime] | None = None,
+    exchange_calendar: ExchangeCalendar | None = None,
 ) -> FastAPI:
     configured_database = database or _default_database()
     configured_database.create_schema()
@@ -151,7 +159,7 @@ def create_app(
         response_model=MarketStatusResponse,
     )
     def market_status() -> MarketStatusResponse:
-        return _market_status(clock())
+        return _market_status(clock(), exchange_calendar)
 
     @application.get(
         "/api/v1/stocks/search",
@@ -249,9 +257,27 @@ def _default_database() -> Database:
     return Database(path)
 
 
-def _market_status(now: datetime) -> MarketStatusResponse:
+def _market_status(
+    now: datetime,
+    exchange_calendar: ExchangeCalendar | None = None,
+) -> MarketStatusResponse:
     local_now = _shanghai_now(now)
-    is_trading_day = local_now.weekday() < 5
+    if exchange_calendar is None:
+        return MarketStatusResponse(
+            market_date=None,
+            status="unavailable",
+            is_open=False,
+            is_trading_day=False,
+        )
+    market_date = exchange_calendar.latest_trading_day(local_now.date())
+    if market_date is None:
+        return MarketStatusResponse(
+            market_date=None,
+            status="unavailable",
+            is_open=False,
+            is_trading_day=False,
+        )
+    is_trading_day = exchange_calendar.is_trading_day(local_now.date())
     current_time = local_now.time().replace(tzinfo=None)
     if not is_trading_day:
         session: Literal["preOpen", "open", "middayBreak", "closed"] = "closed"
@@ -265,9 +291,6 @@ def _market_status(now: datetime) -> MarketStatusResponse:
         session = "open"
     else:
         session = "closed"
-    market_date = local_now.date()
-    while market_date.weekday() >= 5:
-        market_date -= timedelta(days=1)
     return MarketStatusResponse(
         market_date=market_date,
         status=session,
@@ -374,7 +397,7 @@ def _indicator_response(bundle: IndicatorBundle) -> IndicatorsResponse:
     return IndicatorsResponse(
         dates=[date.fromisoformat(value) for value in bundle.dates],
         series={
-            name: IndicatorSeriesResponse(
+            camelize_key(name): IndicatorSeriesResponse(
                 values=[_finite_or_none(value) for value in series.values],
                 reasons=series.reasons,
             )
@@ -387,13 +410,13 @@ def _score_response(analysis: TechnicalAnalysis) -> ScoreResponse:
     return ScoreResponse(
         available=analysis.available,
         reason=analysis.reason,
-        total_score=analysis.total_score,
+        total_score=_total_score_or_error(analysis.total_score),
         grade=cast(
             Literal["弱", "偏弱", "中性", "偏强", "强"] | None,
             analysis.grade,
         ),
         breakdown={
-            name: ComponentScoreResponse(
+            _public_component_name(name): ComponentScoreResponse(
                 score=_finite_or_none(component.score),
                 weight=_required_finite(component.weight),
                 evidence=[
@@ -403,7 +426,7 @@ def _score_response(analysis: TechnicalAnalysis) -> ScoreResponse:
             for name, component in analysis.components.items()
         },
         effective_weights={
-            name: _required_finite(weight)
+            _public_component_name(name): _required_finite(weight)
             for name, weight in analysis.effective_weights.items()
         },
     )
@@ -419,6 +442,14 @@ def _evidence_response(evidence: Evidence) -> EvidenceResponse:
     )
 
 
+def _public_component_name(
+    name: Literal["trend", "momentum", "volume_price", "position", "risk"],
+) -> Literal["trend", "momentum", "volumePrice", "position", "risk"]:
+    if name == "volume_price":
+        return "volumePrice"
+    return name
+
+
 def _finite_or_none(value: float | int | None) -> float | None:
     if value is None:
         return None
@@ -431,6 +462,15 @@ def _required_finite(value: float | int) -> float:
     if numeric is None:
         raise DataUnavailableError("analysis produced a non-finite number")
     return numeric
+
+
+def _total_score_or_error(value: int | None) -> int | None:
+    if value is None:
+        return None
+    numeric = _required_finite(value)
+    if not numeric.is_integer() or not 0 <= numeric <= 100:
+        raise DataUnavailableError("analysis produced an invalid total score")
+    return int(numeric)
 
 
 def _error_response(

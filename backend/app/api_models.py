@@ -22,6 +22,13 @@ ErrorCode = Literal[
     "INSUFFICIENT_HISTORY",
     "SCAN_NOT_FOUND",
 ]
+PublicComponentName = Literal[
+    "trend",
+    "momentum",
+    "volumePrice",
+    "position",
+    "risk",
+]
 AnalysisRange = Literal["3m", "6m", "1y", "3y", "all"]
 Symbol = Annotated[
     str,
@@ -29,14 +36,14 @@ Symbol = Annotated[
 ]
 
 
-def _to_camel(name: str) -> str:
+def camelize_key(name: str) -> str:
     first, *rest = name.split("_")
     return first + "".join(part.capitalize() for part in rest)
 
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(
-        alias_generator=_to_camel,
+        alias_generator=camelize_key,
         allow_inf_nan=False,
         extra="forbid",
         populate_by_name=True,
@@ -49,8 +56,14 @@ class HealthResponse(ApiModel):
 
 
 class MarketStatusResponse(ApiModel):
-    market_date: date
-    status: Literal["preOpen", "open", "middayBreak", "closed"]
+    market_date: date | None
+    status: Literal[
+        "preOpen",
+        "open",
+        "middayBreak",
+        "closed",
+        "unavailable",
+    ]
     is_open: bool
     is_trading_day: bool
 
@@ -114,8 +127,8 @@ class ScoreResponse(ApiModel):
     reason: str | None
     total_score: int | None = Field(ge=0, le=100)
     grade: Literal["弱", "偏弱", "中性", "偏强", "强"] | None
-    breakdown: dict[ComponentName, ComponentScoreResponse]
-    effective_weights: dict[ComponentName, float]
+    breakdown: dict[PublicComponentName, ComponentScoreResponse]
+    effective_weights: dict[PublicComponentName, float]
 
 
 class InsightResponse(ApiModel):
@@ -186,7 +199,7 @@ class ScanResult(ApiModel):
     symbol: Symbol
     score: float | None = Field(default=None, ge=0, le=100)
     grade: Literal["弱", "偏弱", "中性", "偏强", "强"] | None = None
-    breakdown: dict[ComponentName, ComponentScoreResponse] | None = None
+    breakdown: dict[PublicComponentName, ComponentScoreResponse] | None = None
     insights: list[InsightResponse] | None = None
     data_status: Literal["network", "cache", "stale", "error"]
     error_code: ErrorCode | None = None

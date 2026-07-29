@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+from typing import cast
 
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 
+import app.main as main_module
+from app.indicators import IndicatorBundle, MarketBar
 from app.main import create_app
 from app.market_gateway import DataUnavailableError
 from app.persistence import Database
+from app.scoring import ScoreWeights, TechnicalAnalysis, score_technical_analysis
 
 
 class ApiGateway:
@@ -62,20 +68,44 @@ class ApiGateway:
         )
 
 
+class FakeExchangeCalendar:
+    def __init__(self, trading_days: set[date]) -> None:
+        self._trading_days = trading_days
+
+    def is_trading_day(self, day: date) -> bool:
+        return day in self._trading_days
+
+    def latest_trading_day(self, on_or_before: date) -> date | None:
+        candidates = [day for day in self._trading_days if day <= on_or_before]
+        return max(candidates, default=None)
+
+
 def _client(
     gateway: ApiGateway | None = None,
     *,
     now: datetime | None = None,
+    exchange_calendar: FakeExchangeCalendar | None = None,
+    raise_server_exceptions: bool = True,
 ) -> TestClient:
     current_time = now or datetime(2026, 7, 30, 10, tzinfo=UTC)
     database = Database("sqlite+pysqlite:///:memory:")
     database.create_schema()
-    return TestClient(
-        create_app(
+    if exchange_calendar is None:
+        application = create_app(
             database=database,
             market_gateway=gateway or ApiGateway(),
             now_provider=lambda: current_time,
         )
+    else:
+        application = create_app(
+            database=database,
+            market_gateway=gateway or ApiGateway(),
+            now_provider=lambda: current_time,
+            exchange_calendar=exchange_calendar,
+        )
+    return TestClient(
+        application,
+        raise_server_exceptions=raise_server_exceptions,
     )
 
 
@@ -102,9 +132,20 @@ def _assert_json_contains_only_finite_numbers(value: object) -> None:
         assert math.isfinite(value)
 
 
+def _assert_mapping_keys_are_camel_case(value: object) -> None:
+    if isinstance(value, dict):
+        assert all("_" not in key for key in value)
+        for item in value.values():
+            _assert_mapping_keys_are_camel_case(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_mapping_keys_are_camel_case(item)
+
+
 def test_market_status_uses_ymd_dates_and_shanghai_session_state() -> None:
     response = _client(
         now=datetime(2026, 7, 30, 2, tzinfo=UTC),
+        exchange_calendar=FakeExchangeCalendar({date(2026, 7, 30)}),
     ).get("/api/v1/market/status")
 
     assert response.status_code == 200
@@ -119,12 +160,42 @@ def test_market_status_uses_ymd_dates_and_shanghai_session_state() -> None:
 def test_weekend_market_status_reports_the_latest_weekday_market_date() -> None:
     response = _client(
         now=datetime(2026, 8, 1, 2, tzinfo=UTC),
+        exchange_calendar=FakeExchangeCalendar({date(2026, 7, 31)}),
     ).get("/api/v1/market/status")
 
     assert response.status_code == 200
     assert response.json() == {
         "marketDate": "2026-07-31",
         "status": "closed",
+        "isOpen": False,
+        "isTradingDay": False,
+    }
+
+
+def test_exchange_holiday_is_closed_even_when_it_falls_on_a_weekday() -> None:
+    response = _client(
+        now=datetime(2026, 10, 1, 2, tzinfo=UTC),
+        exchange_calendar=FakeExchangeCalendar({date(2026, 9, 30)}),
+    ).get("/api/v1/market/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "marketDate": "2026-09-30",
+        "status": "closed",
+        "isOpen": False,
+        "isTradingDay": False,
+    }
+
+
+def test_market_status_is_unavailable_without_an_exchange_calendar() -> None:
+    response = _client(
+        now=datetime(2026, 7, 30, 2, tzinfo=UTC),
+    ).get("/api/v1/market/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "marketDate": None,
+        "status": "unavailable",
         "isOpen": False,
         "isTradingDay": False,
     }
@@ -195,20 +266,20 @@ def test_analysis_returns_candles_indicators_score_insights_and_cache_state() ->
     }
     assert body["indicators"]["dates"][0] == "2026-01-01"
     assert set(body["indicators"]["series"]) >= {
-        "ma_20",
-        "ma_60",
-        "macd_dif",
-        "macd_dea",
-        "macd_histogram",
+        "ma20",
+        "ma60",
+        "macdDif",
+        "macdDea",
+        "macdHistogram",
         "rsi",
-        "kdj_k",
-        "kdj_d",
-        "kdj_j",
-        "boll_mid",
-        "boll_upper",
-        "boll_lower",
+        "kdjK",
+        "kdjD",
+        "kdjJ",
+        "bollMid",
+        "bollUpper",
+        "bollLower",
         "atr",
-        "volume_ma20",
+        "volumeMa20",
     }
     assert body["score"]["available"] is True
     assert 0 <= body["score"]["totalScore"] <= 100
@@ -216,7 +287,7 @@ def test_analysis_returns_candles_indicators_score_insights_and_cache_state() ->
     assert set(body["score"]["breakdown"]) == {
         "trend",
         "momentum",
-        "volume_price",
+        "volumePrice",
         "position",
         "risk",
     }
@@ -235,6 +306,7 @@ def test_analysis_returns_candles_indicators_score_insights_and_cache_state() ->
     assert body["warnings"] == []
     assert "NaN" not in response.text
     _assert_json_contains_only_finite_numbers(body)
+    _assert_mapping_keys_are_camel_case(body)
 
 
 def test_analysis_reuses_fresh_cache_and_force_refresh_bypasses_it() -> None:
@@ -278,7 +350,7 @@ def test_analysis_accepts_camel_case_nested_public_configuration() -> None:
     assert response.json()["score"]["effectiveWeights"] == {
         "trend": 50.0,
         "momentum": 0.0,
-        "volume_price": 50.0,
+        "volumePrice": 50.0,
         "position": 0.0,
         "risk": 0.0,
     }
@@ -421,6 +493,36 @@ def test_non_finite_weight_is_rejected_without_echoing_nan() -> None:
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INVALID_CONFIG"
     assert "NaN" not in response.text
+
+
+def test_non_finite_total_score_uses_standard_data_unavailable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def nonfinite_score(
+        bars: Sequence[MarketBar],
+        indicators: IndicatorBundle,
+        weights: ScoreWeights | None = None,
+    ) -> TechnicalAnalysis:
+        result = score_technical_analysis(bars, indicators, weights)
+        return replace(result, total_score=cast(int, math.nan))
+
+    monkeypatch.setattr(main_module, "score_technical_analysis", nonfinite_score)
+    response = _client(raise_server_exceptions=False).post(
+        "/api/v1/analysis",
+        json=_analysis_payload(),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "DATA_UNAVAILABLE",
+            "message": "行情数据暂时不可用，请稍后重试。",
+            "retryable": True,
+            "details": None,
+        }
+    }
+    assert "NaN" not in response.text
+    assert "Infinity" not in response.text
 
 
 @pytest.mark.parametrize(

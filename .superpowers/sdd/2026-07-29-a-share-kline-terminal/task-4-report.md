@@ -132,3 +132,84 @@ exit 0
 - The default database path is local to `backend/`. Packaging or a future
   installer may prefer an OS user-data directory; `A_SHARE_DATABASE_PATH`
   already provides an override without changing the API.
+
+---
+
+## Review Fix Round 1
+
+Follow-up commit: included with this report update.
+
+### Findings resolved
+
+1. Public response mapping keys are now explicitly translated at the domain/API
+   boundary. Pydantic field aliases do not transform arbitrary dictionary keys,
+   so indicator series now emit `ma20`, `macdDif`, `volumeMa20`, etc., while
+   score breakdown and effective-weight maps emit `volumePrice`. The public
+   response models also use camelCase component-key literals.
+2. Market status no longer treats every weekday as an exchange trading day.
+   `create_app` accepts an injected offline `ExchangeCalendar` contract with
+   authoritative `is_trading_day` and `latest_trading_day` behavior. A weekday
+   holiday is closed and reports the previous market date; when no authoritative
+   calendar is available, the route returns `status=unavailable`,
+   `marketDate=null`, and never claims the market is open.
+3. A non-finite or otherwise invalid total score is validated before Pydantic
+   response construction. It now raises the domain `DataUnavailableError` and
+   returns the standard HTTP `503` / retryable `DATA_UNAVAILABLE` envelope
+   instead of escaping as an unhandled response-validation HTTP `500`.
+
+No scan execution route or Task 6 scheduling behavior was added.
+
+### Root-cause and TDD evidence
+
+- Mapping keys:
+  - Reproduction showed `model_dump(by_alias=True)` retained
+    `volume_price`; aliases affected model fields only.
+  - RED: analysis tests expected `ma20`/`macdDif`/`volumeMa20` and
+    `volumePrice` but received snake_case keys.
+  - GREEN: focused analysis and custom-weight response tests passed, including
+    recursive verification that public JSON mapping keys contain no underscore.
+- Exchange holidays:
+  - Reproduction at `2026-10-01 10:00 Asia/Shanghai` returned
+    `status=open`, because the implementation only checked `weekday()`.
+  - RED: injected-calendar calls were unsupported, the National Day holiday
+    was reported open, and the no-calendar path also reported open.
+  - GREEN: open-day, weekend, weekday-holiday, and unavailable-calendar tests
+    all passed using an offline fake calendar.
+- Non-finite total score:
+  - Reproduction showed Pydantic's `finite_number` validation error occurred
+    before the API error handler could standardize it.
+  - RED: an injected scorer result with `total_score=NaN` returned HTTP `500`.
+  - GREEN: it returns HTTP `503`, `DATA_UNAVAILABLE`, no NaN, and no Infinity.
+
+### Verification
+
+Run from `backend/`:
+
+```text
+python -m ruff format --check app tests
+15 files already formatted
+
+python -m ruff check app tests
+All checks passed!
+
+python -m mypy
+Success: no issues found in 15 source files
+
+python -m pytest
+100 passed in 2.07s
+
+git diff --check
+exit 0
+```
+
+### Review-fix self-check
+
+- The domain indicator/scoring names remain unchanged; translation occurs only
+  at the public response boundary.
+- Calendar tests contain fixed local dates and never access AKShare or another
+  live network service.
+- An absent calendar is explicit unavailability, not a guessed weekday status.
+- Optional warm-up values remain `null`; a corrupt required total score becomes
+  a standardized service error.
+- The earlier holiday-calendar concern is superseded by the injected
+  authoritative-calendar contract and conservative unavailable fallback.
