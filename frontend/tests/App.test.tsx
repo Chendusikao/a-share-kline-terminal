@@ -302,6 +302,7 @@ describe("App routes", () => {
     expect(screen.getByText("强")).toBeInTheDocument();
     expect(screen.getByText("价格运行在 MA20 上方")).toBeInTheDocument();
     expect(screen.getByText("后端证据：靠近区间上沿")).toBeInTheDocument();
+    expect(screen.getByText("缓存命中 2026-07-29")).toBeInTheDocument();
     expect(screen.queryByText(/近 20 日区间/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: "平安银行 K 线、成交量与副图" }),
@@ -420,5 +421,27 @@ describe("App routes", () => {
       "href",
       "/",
     );
+  });
+
+  it("renders an explicit empty state instead of an empty chart", async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      if (String(input).includes("/analysis")) {
+        return Promise.resolve(
+          response({
+            ...analysis,
+            candles: [],
+            indicators: { dates: [], series: {} },
+          }),
+        );
+      }
+      return Promise.resolve(response({}));
+    });
+
+    renderApp("/stocks/000001");
+
+    expect(await screen.findByText("暂无可用 K 线数据")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: "平安银行 K 线、成交量与副图" }),
+    ).not.toBeInTheDocument();
   });
 });

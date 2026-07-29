@@ -53,9 +53,7 @@ def test_scan_retries_each_failed_symbol_twice_and_limits_workers_to_three() -> 
         )
 
     service = ScanService(database, analyze_symbol=analyze)
-    request = ScanRequest(
-        symbols=["000001", "000002", "000003", "000004", "000005"]
-    )
+    request = ScanRequest(symbols=["000001", "000002", "000003", "000004", "000005"])
     scan_id = service.start(request, market_date=date(2026, 7, 30))
     result = _wait_for_terminal(service, scan_id)
     service.shutdown()

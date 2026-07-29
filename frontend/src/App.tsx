@@ -510,12 +510,22 @@ function StockDetail() {
 
       <div className="analysis-layout">
         <section className="chart-panel">
-          <KlineChart
-            analysis={data}
-            selection={{ overlays, oscillator }}
-            indicatorConfig={preferences.indicatorConfig}
-          />
-          <p className="chart-hint">滚轮缩放 · 拖动平移 · 悬停查看十字光标</p>
+          {data.candles.length === 0 ? (
+            <div className="state-panel">
+              <strong>暂无可用 K 线数据</strong>
+            </div>
+          ) : (
+            <>
+              <KlineChart
+                analysis={data}
+                selection={{ overlays, oscillator }}
+                indicatorConfig={preferences.indicatorConfig}
+              />
+              <p className="chart-hint">
+                滚轮缩放 · 拖动平移 · 悬停查看十字光标
+              </p>
+            </>
+          )}
         </section>
         <AnalysisRail data={data} />
       </div>

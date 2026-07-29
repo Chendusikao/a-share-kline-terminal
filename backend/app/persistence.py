@@ -443,10 +443,14 @@ class ScanRepository:
     def retain_latest(self, limit: int) -> None:
         if limit < 1:
             raise ValueError("scan retention limit must be positive")
-        retained = select(ScanRunModel.id).order_by(
-            ScanRunModel.created_at.desc(),
-            ScanRunModel.id.desc(),
-        ).limit(limit)
+        retained = (
+            select(ScanRunModel.id)
+            .order_by(
+                ScanRunModel.created_at.desc(),
+                ScanRunModel.id.desc(),
+            )
+            .limit(limit)
+        )
         obsolete = list(
             self._session.scalars(
                 select(ScanRunModel.id).where(ScanRunModel.id.not_in(retained))
@@ -457,9 +461,7 @@ class ScanRepository:
         self._session.execute(
             delete(ScanResultModel).where(ScanResultModel.run_id.in_(obsolete))
         )
-        self._session.execute(
-            delete(ScanRunModel).where(ScanRunModel.id.in_(obsolete))
-        )
+        self._session.execute(delete(ScanRunModel).where(ScanRunModel.id.in_(obsolete)))
 
     def get_run(self, scan_id: str) -> ScanRunRecord | None:
         row = self._session.get(ScanRunModel, scan_id)
