@@ -183,3 +183,84 @@ exit 0
   histories.
 - No Task 4 routes, Task 5 UI, Task 6 scan behavior, investment recommendation,
   or return prediction was added.
+
+---
+
+## Review Fix Round 2
+
+Follow-up commit: `7851a95` (`fix: reject duplicate scoring dates`)
+
+### Findings resolved
+
+1. Duplicate trading dates are now an explicit full-analysis integrity failure.
+   Any duplicate returns `available=False`, reason `duplicate_trade_dates`, null
+   total/grade/component scores, and a neutral duplicate-date explanation in
+   all five insights. It cannot become scoreable merely because the remaining
+   distinct-date count reaches 80.
+2. Extreme mixed-scale positive weights are normalized with exact decimal
+   intermediates:
+   - a positive effective percentage that Python float can represent remains
+     positive, including a `5e-324` raw weight beside four `1.0` weights;
+   - a configuration whose positive effective percentage truly cannot be
+     represented as a nonzero response float is rejected with a validation
+     error instead of silently converting that positive weight to zero;
+   - equal `1e308` inputs continue to normalize to `20%` each.
+
+This duplicate-date behavior supersedes Review Fix Round 1's narrower
+distinct-date eligibility rule.
+
+### TDD RED/GREEN evidence
+
+- Duplicate date with an otherwise sufficient history:
+  - RED: 81 records containing 80 unique dates returned `available=True`.
+  - GREEN: the same input returns `duplicate_trade_dates`; all scores and grade
+    are null and every insight explains the duplicate-date rejection.
+- Unrepresentable positive effective share:
+  - RED: a `1e-200` weight beside `1e200` was accepted even though its effective
+    response share collapsed to zero.
+  - GREEN: the configuration is rejected with “positive score weights are too
+    different in scale to normalize”.
+- Representable subnormal effective share:
+  - RED: a `5e-324` weight beside four `1.0` weights normalized to zero because
+    an intermediate float division underflowed.
+  - GREEN: decimal intermediates preserve a positive effective share, all five
+    positive raw weights remain positive, and the effective weights sum exactly
+    to 100.
+
+Each regression was observed failing for its intended behavior before its
+production change.
+
+### Verification
+
+Run from `backend/`:
+
+```text
+python -m pytest tests\test_scoring.py -q
+41 passed
+
+python -m pytest
+73 passed in 1.67s
+
+python -m ruff format --check app tests
+13 files already formatted
+
+python -m ruff check app tests
+All checks passed!
+
+python -m mypy app tests
+Success: no issues found in 13 source files
+
+git diff --check
+exit 0
+```
+
+### Review-fix self-check
+
+- A duplicate date takes precedence over the 80-day and missing-indicator
+  reasons because the input history itself is invalid.
+- The result remains structured and null-safe rather than throwing from the
+  scoring entry point for duplicate market dates.
+- Ordinary/default weights, zero weights, exact 100% totals, all-large finite
+  weights, representable tiny shares, and unrepresentable shares have direct
+  coverage.
+- No public API, frontend, or scan behavior changed.
