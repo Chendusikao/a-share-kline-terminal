@@ -165,6 +165,29 @@ def test_weights_validate_and_normalize_to_percentages() -> None:
             ScoreWeights.model_validate(invalid)
 
 
+def test_large_finite_weights_normalize_without_aggregate_overflow() -> None:
+    from app.scoring import ScoreWeights, normalize_weights
+
+    normalized = normalize_weights(
+        ScoreWeights(
+            trend=1e308,
+            momentum=1e308,
+            volume_price=1e308,
+            position=1e308,
+            risk=1e308,
+        )
+    )
+
+    assert normalized == {
+        "trend": 20,
+        "momentum": 20,
+        "volume_price": 20,
+        "position": 20,
+        "risk": 20,
+    }
+    assert all(math.isfinite(value) for value in normalized.values())
+
+
 @pytest.mark.parametrize(
     ("score", "expected"),
     [
@@ -385,6 +408,44 @@ def test_insufficient_history_returns_no_scores_but_visible_available_evidence()
     assert all(component.score is None for component in result.components.values())
     assert len(result.insights) == 5
     assert any(insight.evidence for insight in result.insights)
+
+
+def test_duplicate_dates_do_not_satisfy_eighty_valid_trading_day_gate() -> None:
+    from app.scoring import score_technical_analysis
+
+    bars = _bars(80)
+    bars[1] = MarketBar(
+        trade_date=bars[0].trade_date,
+        high=bars[1].high,
+        low=bars[1].low,
+        close=bars[1].close,
+        volume=bars[1].volume,
+    )
+    indicators = _indicators(80)
+    indicators.dates[1] = indicators.dates[0]
+
+    result = score_technical_analysis(bars, indicators)
+
+    assert result.available is False
+    assert result.reason == "insufficient_history:80"
+    assert result.total_score is None
+    assert result.grade is None
+
+
+def test_missing_indicators_use_missing_indicator_insight_reason() -> None:
+    from app.scoring import score_technical_analysis
+
+    indicators = _indicators()
+    del indicators.series["macd_dif"]
+
+    result = score_technical_analysis(_bars(), indicators)
+    momentum = next(
+        insight for insight in result.insights if insight.category == "momentum"
+    )
+
+    assert result.reason == "missing_indicators:momentum"
+    assert "指标缺失" in momentum.summary
+    assert "交易日不足" not in momentum.summary
 
 
 def test_insights_are_structured_visible_and_never_recommend_or_predict() -> None:

@@ -92,9 +92,12 @@ def normalize_weights(
     weights: ScoreWeights,
 ) -> dict[ComponentName, float]:
     raw = weights.model_dump()
-    total = sum(raw.values())
+    maximum = max(raw.values())
+    scaled = {name: raw[name] / maximum for name in COMPONENT_NAMES}
+    total = sum(scaled.values())
     normalized = {
-        name: _clean_number(raw[name] / total * 100) or 0.0 for name in COMPONENT_NAMES
+        name: _clean_number(scaled[name] / total * 100) or 0.0
+        for name in COMPONENT_NAMES
     }
     last_positive = next(name for name in reversed(COMPONENT_NAMES) if raw[name] > 0)
     normalized[last_positive] = 100.0 - sum(
@@ -133,7 +136,8 @@ def score_technical_analysis(
         "position": _position_component(ordered),
         "risk": _risk_component(ordered, indicators),
     }
-    history_available = len(ordered) >= MINIMUM_HISTORY
+    valid_trading_days = len({bar.trade_date for bar in ordered})
+    history_available = valid_trading_days >= MINIMUM_HISTORY
     missing = [name for name, item in computed.items() if item.score is None]
     available = history_available and not missing
     if not history_available:
@@ -166,6 +170,7 @@ def score_technical_analysis(
             name,
             computed[name],
             history_available=history_available,
+            unavailable_reason=reason,
         )
         for name in COMPONENT_NAMES
     ]
@@ -422,8 +427,9 @@ def _build_insight(
     component: _ComputedComponent,
     *,
     history_available: bool,
+    unavailable_reason: str | None,
 ) -> Insight:
-    if not history_available or component.score is None:
+    if not history_available:
         risk_count = _risk_count(component.evidence) if category == "risk" else 0
         direction: Direction = "风险" if risk_count else "中性"
         severity: Severity = "中" if risk_count else "低"
@@ -432,6 +438,14 @@ def _build_insight(
             direction,
             "有效交易日不足 80 日，仅展示当前可用指标证据",
             severity,
+            component.evidence,
+        )
+    if component.score is None:
+        return Insight(
+            category,
+            "中性",
+            f"评分所需指标缺失（{unavailable_reason}），仅展示当前可用指标证据",
+            "低",
             component.evidence,
         )
 
