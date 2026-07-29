@@ -107,3 +107,79 @@ exit 0
   risk percentile.
 - Task 4 should serialize these internal dataclasses without re-deriving any
   score, direction, severity, or evidence in the API layer.
+
+---
+
+## Review Fix Round 1
+
+Follow-up commit: `5ebcab4` (`fix: harden scoring validation`)
+
+### Findings resolved
+
+1. Made weight normalization overflow-safe for every accepted finite input.
+   Values are first scaled by the largest weight, so a set such as five
+   `1e308` weights normalizes to `20%` each instead of overflowing its
+   aggregate and collapsing to `0/0/0/0/100`.
+2. Changed the 80-valid-trading-day gate to count distinct trading dates.
+   Duplicate records no longer make a 79-day history scoreable.
+3. Split insight unavailability messaging by cause. A component missing its
+   required indicators after 80 valid dates now displays the
+   `missing_indicators:<component>` reason instead of claiming the history is
+   shorter than 80 days.
+
+### TDD RED/GREEN evidence
+
+- Large finite weights:
+  - RED: five `1e308` inputs produced effective weights
+    `0/0/0/0/100`.
+  - GREEN: the same inputs produce finite effective weights
+    `20/20/20/20/20`.
+- Duplicate dates:
+  - RED: 80 records containing only 79 distinct dates returned
+    `available=True`.
+  - GREEN: it returns `available=False`, `insufficient_history:80`, and null
+    score/grade.
+- Missing indicator insight:
+  - RED: deleting `macd_dif` after 80 valid dates yielded the summary
+    “有效交易日不足 80 日”.
+  - GREEN: the momentum insight identifies
+    `missing_indicators:momentum` and no longer claims insufficient history.
+
+All three focused regression tests were observed failing for the documented
+reason before the production changes, then passed after their individual
+root-cause fixes.
+
+### Verification
+
+Run from `backend/`:
+
+```text
+python -m pytest tests\test_scoring.py -q
+39 passed
+
+python -m pytest
+71 passed in 1.62s
+
+python -m ruff format --check app tests
+13 files already formatted
+
+python -m ruff check app tests
+All checks passed!
+
+python -m mypy app tests
+Success: no issues found in 13 source files
+
+git diff --check
+exit 0
+```
+
+### Review-fix self-check
+
+- Normal weight behavior, exact 100% totals, and zero-weight preservation remain
+  covered.
+- Duplicate dates affect only eligibility; they cannot inflate the valid-day
+  count.
+- The historical-insufficiency summary remains unchanged for genuinely short
+  histories.
+- No Task 4 routes, Task 5 UI, Task 6 scan behavior, investment recommendation,
+  or return prediction was added.
