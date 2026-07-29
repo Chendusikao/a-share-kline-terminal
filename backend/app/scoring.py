@@ -30,8 +30,18 @@ COMPONENT_NAMES: tuple[ComponentName, ...] = (
 MINIMUM_HISTORY = 80
 
 
+def _to_camel(name: str) -> str:
+    first, *rest = name.split("_")
+    return first + "".join(part.capitalize() for part in rest)
+
+
 class ScoreWeights(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(
+        alias_generator=_to_camel,
+        allow_inf_nan=False,
+        extra="forbid",
+        populate_by_name=True,
+    )
 
     trend: float = Field(default=35, ge=0)
     momentum: float = Field(default=25, ge=0)
