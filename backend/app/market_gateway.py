@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
+from datetime import date
 from typing import Protocol, TypeVar
 
 import akshare as ak
@@ -19,7 +20,13 @@ class MarketDataSource(Protocol):
     def fetch_stock_list(self) -> pd.DataFrame: ...
 
     def fetch_daily_candles(
-        self, symbol: str, *, period: str, adjustment: str
+        self,
+        symbol: str,
+        *,
+        period: str,
+        adjustment: str,
+        start_date: str,
+        end_date: str,
     ) -> pd.DataFrame: ...
 
 
@@ -28,11 +35,19 @@ class AkshareSource:
         return ak.stock_info_a_code_name()
 
     def fetch_daily_candles(
-        self, symbol: str, *, period: str, adjustment: str
+        self,
+        symbol: str,
+        *,
+        period: str,
+        adjustment: str,
+        start_date: str,
+        end_date: str,
     ) -> pd.DataFrame:
         return ak.stock_zh_a_hist(
             symbol=symbol,
             period=period,
+            start_date=start_date,
+            end_date=end_date,
             adjust=adjustment,
         )
 
@@ -63,12 +78,26 @@ class AkshareGateway:
     def fetch_stock_list(self) -> pd.DataFrame:
         return self._with_retry(self._source.fetch_stock_list)
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
         return self._with_retry(
             lambda: self._source.fetch_daily_candles(
                 symbol,
                 period="daily",
                 adjustment="qfq",
+                start_date=(
+                    start_date.strftime("%Y%m%d")
+                    if start_date is not None
+                    else "19700101"
+                ),
+                end_date=(
+                    end_date.strftime("%Y%m%d") if end_date is not None else "20500101"
+                ),
             )
         )
 

@@ -9,16 +9,22 @@ import pytest
 class FlakySource:
     def __init__(self) -> None:
         self.attempts = 0
-        self.request: tuple[str, str, str] | None = None
+        self.request: tuple[str, str, str, str, str] | None = None
 
     def fetch_stock_list(self) -> pd.DataFrame:
         return pd.DataFrame()
 
     def fetch_daily_candles(
-        self, symbol: str, *, period: str, adjustment: str
+        self,
+        symbol: str,
+        *,
+        period: str,
+        adjustment: str,
+        start_date: str,
+        end_date: str,
     ) -> pd.DataFrame:
         self.attempts += 1
-        self.request = (symbol, period, adjustment)
+        self.request = (symbol, period, adjustment, start_date, end_date)
         if self.attempts < 3:
             raise ConnectionError("temporary upstream failure")
         return pd.DataFrame([{"日期": "2026-07-29", "收盘": 10.5}])
@@ -34,7 +40,13 @@ class SlowSource:
         return pd.DataFrame()
 
     def fetch_daily_candles(
-        self, symbol: str, *, period: str, adjustment: str
+        self,
+        symbol: str,
+        *,
+        period: str,
+        adjustment: str,
+        start_date: str,
+        end_date: str,
     ) -> pd.DataFrame:
         return pd.DataFrame()
 
@@ -57,7 +69,41 @@ def test_gateway_retries_transient_failure_and_requests_daily_qfq_data() -> None
 
     assert result.to_dict("records") == [{"日期": "2026-07-29", "收盘": 10.5}]
     assert source.attempts == 3
-    assert source.request == ("000001", "daily", "qfq")
+    assert source.request == (
+        "000001",
+        "daily",
+        "qfq",
+        "19700101",
+        "20500101",
+    )
+
+
+def test_gateway_forwards_a_bounded_daily_history_window() -> None:
+    from datetime import date
+
+    from app.market_gateway import AkshareGateway
+
+    source = FlakySource()
+    gateway = AkshareGateway(
+        source=source,
+        attempts=3,
+        timeout_seconds=1,
+        retry_delay_seconds=0,
+    )
+
+    gateway.fetch_daily_candles(
+        "000001",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 7, 30),
+    )
+
+    assert source.request == (
+        "000001",
+        "daily",
+        "qfq",
+        "20260101",
+        "20260730",
+    )
 
 
 def test_gateway_turns_repeated_timeouts_into_retryable_data_unavailable() -> None:

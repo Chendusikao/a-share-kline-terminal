@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
 import pandas as pd
@@ -20,7 +20,13 @@ from app.persistence import (
 class MarketGateway(Protocol):
     def fetch_stock_list(self) -> pd.DataFrame: ...
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame: ...
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,9 +103,12 @@ class CandleService:
         now: datetime,
         force_refresh: bool = False,
         range_name: str = "3y",
+        history_limit: int | None = None,
     ) -> CandleData:
         if range_name not in {"3m", "6m", "1y", "3y", "all"}:
             raise ValueError(f"unsupported candle range: {range_name}")
+        if history_limit is not None and history_limit < 1:
+            raise ValueError("history limit must be positive")
         current_time = _aware_utc(now)
         with self._database.session() as session:
             repository = CandleRepository(session)
@@ -110,13 +119,29 @@ class CandleService:
         if cached and is_fresh and not force_refresh:
             assert updated_at is not None
             return _slice_candle_data(
-                CandleData(cached, updated_at, from_cache=True, stale=False),
+                _limit_candle_data(
+                    CandleData(cached, updated_at, from_cache=True, stale=False),
+                    history_limit,
+                ),
                 range_name,
             )
 
         try:
-            frame = self._gateway.fetch_daily_candles(symbol)
+            if history_limit is None:
+                frame = self._gateway.fetch_daily_candles(symbol)
+            else:
+                end_date = now.date()
+                start_date = end_date - timedelta(
+                    days=math.ceil(history_limit * 7 / 5) + 30
+                )
+                frame = self._gateway.fetch_daily_candles(
+                    symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
             replacement = _candle_records(frame, symbol, current_time)
+            if history_limit is not None:
+                replacement = replacement[-history_limit:]
             if not replacement:
                 raise DataUnavailableError("AKShare returned no valid candle data")
             with self._database.session() as session:
@@ -135,11 +160,14 @@ class CandleService:
         except DataUnavailableError:
             if cached and updated_at is not None:
                 return _slice_candle_data(
-                    CandleData(
-                        cached,
-                        updated_at,
-                        from_cache=True,
-                        stale=True,
+                    _limit_candle_data(
+                        CandleData(
+                            cached,
+                            updated_at,
+                            from_cache=True,
+                            stale=True,
+                        ),
+                        history_limit,
                     ),
                     range_name,
                 )
@@ -299,6 +327,20 @@ def _slice_candle_data(data: CandleData, range_name: str) -> CandleData:
     cutoff = (latest - offsets[range_name]).date()
     return CandleData(
         [candle for candle in data.candles if candle.trade_date >= cutoff],
+        data.updated_at,
+        data.from_cache,
+        data.stale,
+    )
+
+
+def _limit_candle_data(
+    data: CandleData,
+    history_limit: int | None,
+) -> CandleData:
+    if history_limit is None or len(data.candles) <= history_limit:
+        return data
+    return CandleData(
+        data.candles[-history_limit:],
         data.updated_at,
         data.from_cache,
         data.stale,

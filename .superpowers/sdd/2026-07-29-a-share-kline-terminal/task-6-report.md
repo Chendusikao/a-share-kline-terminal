@@ -87,3 +87,54 @@ exit 0
 
 The production build retains the existing advisory that the ECharts bundle is
 larger than 500 kB; it does not fail the build.
+
+---
+
+## Review Fix Round 1
+
+### Findings resolved
+
+1. Scan acquisition is now bounded at the gateway and persistence boundaries.
+   `required_scan_history` derives the score window from the 80-day scoring
+   floor, MACD slow/signal warm-up including the prior histogram, RSI warm-up,
+   and ATR warm-up plus the 60 historical risk-percentile observations.
+   `CandleService` converts that row requirement to a bounded date request and
+   trims the response before replacing the symbol cache.
+2. Same-day scan de-duplication now treats symbols as a set. Symbols are sorted
+   before the request is encoded as canonical, key-sorted JSON, so equivalent
+   requests with different input ordering produce the same hash.
+
+### Root cause and TDD evidence
+
+- Bounded history:
+  - Root cause: the gateway exposed no start/end dates, inheriting AKShare's
+    1970–2050 defaults, while `CandleService` persisted the full response
+    before the scanner sliced it.
+  - RED: the real `ScanService` → `CandleService` test could not import a
+    derived history function; the gateway accepted no date bounds.
+  - GREEN: a configuration requiring 170 bars sends non-null start/end dates,
+    completes a real score, and persists exactly 170 rows even when the fake
+    upstream returns 600. A gateway boundary test confirms dates are forwarded
+    as AKShare `YYYYMMDD` parameters.
+- Canonical symbol set:
+  - Root cause: `json.dumps(sort_keys=True)` sorted object keys but preserved
+    list ordering.
+  - RED: `["000001", "600000"]` and its permutation created different scan
+    IDs on the same market date.
+  - GREEN: the permutation returns the original scan ID; forced refresh still
+    creates a new batch.
+
+### Review-fix verification
+
+Run from `backend/`:
+
+```text
+ruff check app tests
+All checks passed
+
+mypy app tests
+Success: no issues found in 17 source files
+
+pytest
+108 passed
+```

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -22,7 +22,13 @@ class CatalogGateway:
             ]
         )
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
         raise AssertionError("candle fetch is not expected")
 
 
@@ -36,7 +42,13 @@ class CandleGateway:
             raise DataUnavailableError("upstream unavailable")
         raise AssertionError("catalog fetch is not expected")
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
         self.candle_calls += 1
         if self.fail:
             raise DataUnavailableError("upstream unavailable")
@@ -68,7 +80,13 @@ class RangeGateway:
     def fetch_stock_list(self) -> pd.DataFrame:
         raise AssertionError("catalog fetch is not expected")
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
         rows = []
         for trade_date, close in (
             ("2022-07-29", 8.0),
@@ -94,7 +112,13 @@ class PartiallyMalformedCandleGateway:
     def fetch_stock_list(self) -> pd.DataFrame:
         raise AssertionError("catalog fetch is not expected")
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
         return pd.DataFrame(
             [
                 {

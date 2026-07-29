@@ -216,13 +216,14 @@ class ScanService:
         request: ScanRequest,
     ) -> ScanOutcome:
         assert self._candle_service is not None
+        history_size = required_scan_history(request)
         candle_data = self._candle_service.get(
             symbol,
             now=self._clock(),
             force_refresh=request.force_refresh,
-            range_name="all",
+            history_limit=history_size,
         )
-        candles = candle_data.candles[-MINIMUM_HISTORY:]
+        candles = candle_data.candles[-history_size:]
         bars = [
             MarketBar(
                 trade_date=item.trade_date,
@@ -302,6 +303,7 @@ def _request_hash(request: ScanRequest) -> str:
         by_alias=True,
         exclude={"force_refresh"},
     )
+    payload["symbols"] = sorted(request.symbols)
     canonical = json.dumps(
         payload,
         ensure_ascii=False,
@@ -310,6 +312,16 @@ def _request_hash(request: ScanRequest) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def required_scan_history(request: ScanRequest) -> int:
+    config = request.indicator_config
+    return max(
+        MINIMUM_HISTORY,
+        config.macd.slow + config.macd.signal,
+        config.rsi.period + 1,
+        config.atr.period + 60,
+    )
 
 
 def _public_component(name: str) -> str:

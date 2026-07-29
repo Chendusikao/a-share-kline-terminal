@@ -45,7 +45,13 @@ class ApiGateway:
             }
         )
 
-    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
         self.candle_calls += 1
         if self._candle_failure:
             raise DataUnavailableError("candles unavailable")
