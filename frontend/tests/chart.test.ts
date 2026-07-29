@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildKlineOption } from "../src/chart";
+import { DEFAULT_INDICATOR_CONFIG } from "../src/storage";
 import type { AnalysisResponse } from "../src/types";
 
 const analysis: AnalysisResponse = {
@@ -48,10 +49,14 @@ const analysis: AnalysisResponse = {
 
 describe("K-line option mapping", () => {
   it("maps OHLC in ECharts order and enables terminal interactions", () => {
-    const option = buildKlineOption(analysis, {
-      overlays: ["ma20"],
-      oscillator: "rsi14",
-    });
+    const option = buildKlineOption(
+      analysis,
+      {
+        overlays: ["ma20"],
+        oscillator: "rsi14",
+      },
+      DEFAULT_INDICATOR_CONFIG,
+    );
 
     expect(option.xAxis[0].data).toEqual(["2026-07-28", "2026-07-29"]);
     expect(option.series[0].data).toEqual([
@@ -64,10 +69,14 @@ describe("K-line option mapping", () => {
   });
 
   it("adds selected overlays and one oscillator without inventing signals", () => {
-    const option = buildKlineOption(analysis, {
-      overlays: ["ma20"],
-      oscillator: "rsi14",
-    });
+    const option = buildKlineOption(
+      analysis,
+      {
+        overlays: ["ma20"],
+        oscillator: "rsi14",
+      },
+      DEFAULT_INDICATOR_CONFIG,
+    );
 
     expect(option.series.map((series) => series.name)).toEqual([
       "日 K",
@@ -76,5 +85,59 @@ describe("K-line option mapping", () => {
       "RSI14",
     ]);
     expect(option.series[2].data).toEqual([10.2, 10.3]);
+  });
+
+  it("maps persisted indicator colors onto every supported series family", () => {
+    const configured = structuredClone(DEFAULT_INDICATOR_CONFIG);
+    configured.ma.colors[2] = "#112233";
+    configured.rsi.color = "#223344";
+    configured.kdj.kColor = "#334455";
+    configured.boll.upperColor = "#445566";
+    configured.macd.difColor = "#556677";
+    configured.atr.color = "#667788";
+    analysis.indicators.series = {
+      ma20: { values: [1, 2], reasons: [null, null] },
+      rsi14: { values: [1, 2], reasons: [null, null] },
+      kdjK: { values: [1, 2], reasons: [null, null] },
+      bollUpper: { values: [1, 2], reasons: [null, null] },
+      macdDif: { values: [1, 2], reasons: [null, null] },
+      atr14: { values: [1, 2], reasons: [null, null] },
+    };
+
+    const option = buildKlineOption(
+      analysis,
+      {
+        overlays: ["ma20", "bollUpper"],
+        oscillator: "rsi14",
+      },
+      configured,
+    );
+    const colorOf = (name: string) =>
+      option.series.find((series) => series.name === name)?.lineStyle?.color;
+
+    expect(colorOf("MA20")).toBe("#112233");
+    expect(colorOf("BOLL 上轨")).toBe("#445566");
+    expect(colorOf("RSI14")).toBe("#223344");
+    expect(
+      buildKlineOption(
+        analysis,
+        { overlays: [], oscillator: "kdjK" },
+        configured,
+      ).series.find((series) => series.name === "KDJ K")?.lineStyle?.color,
+    ).toBe("#334455");
+    expect(
+      buildKlineOption(
+        analysis,
+        { overlays: [], oscillator: "macdDif" },
+        configured,
+      ).series.find((series) => series.name === "MACD DIF")?.lineStyle?.color,
+    ).toBe("#556677");
+    expect(
+      buildKlineOption(
+        analysis,
+        { overlays: [], oscillator: "atr14" },
+        configured,
+      ).series.find((series) => series.name === "ATR14")?.lineStyle?.color,
+    ).toBe("#667788");
   });
 });

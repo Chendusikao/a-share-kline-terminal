@@ -106,3 +106,70 @@ added later if startup size becomes material for this localhost-only app.
 - Confirmed scan rows have a tested descending-score sorter ready for Task 6.
 - Confirmed responsive CSS changes the detail layout at exactly `1024px`.
 - Confirmed no network-loaded fonts or external UI assets are required.
+
+---
+
+## Review Fix Round 1
+
+### Findings resolved
+
+1. Version `1` local preferences are now accepted only when the complete nested
+   shape is valid. Watchlist/recent lists, every indicator section and color,
+   all parameter bounds, MACD ordering, and all five score weights are checked.
+   Corrupt, incomplete, non-finite, duplicated, or unsupported stored data
+   falls back atomically to complete defaults.
+2. The effective persisted `indicatorConfig` now flows through `StockDetail`
+   to `KlineChart` and `buildKlineOption`. MA colors are resolved by configured
+   period index; RSI, KDJ, BOLL, MACD, ATR, and volume-MA series use their
+   respective configured colors.
+3. Removed the frontend `metric.includes("20")` search and the synthesized
+   “近 20 日区间” label. The key-position panel now renders every backend
+   position evidence description plus neutral raw metric, comparison, value,
+   and reference fields.
+
+The Task 6 boundary remains unchanged; no scan execution, polling, retry, or
+scheduling behavior was added.
+
+### Root cause and TDD evidence
+
+- Nested storage validation:
+  - Root cause: `loadPreferences` checked only the version and four top-level
+    property presences, then shallowly spread unvalidated nested data.
+  - RED: a version `1` object with a string MA period collection, missing
+    indicator sections, and a missing risk weight retained its watchlist and
+    incomplete payload.
+  - GREEN: it returns an empty default watchlist and complete default MA, MACD,
+    and score configuration.
+- Indicator colors:
+  - Root cause: the chart boundary accepted only analysis data and selection;
+    persisted indicator configuration never reached option construction.
+  - RED: configured colors for six series families all produced `undefined`
+    line colors.
+  - GREEN: focused option assertions pass for MA20, BOLL upper, RSI, KDJ K,
+    MACD DIF, and ATR.
+- Position evidence:
+  - Root cause: `StockDetail` selected evidence by a frontend substring search
+    and `AnalysisRail` hardcoded a 20-day percentile presentation.
+  - RED: arbitrary backend evidence still produced a synthesized “近 20 日区间
+    82%” label.
+  - GREEN: only the backend description and neutral raw evidence fields are
+    rendered; the synthesized label is absent.
+
+### Review-fix verification
+
+Run from `frontend/`:
+
+```text
+npm run typecheck
+exit 0
+
+npm test
+5 test files passed
+19 tests passed
+
+npm run build
+vite production build completed
+
+npm run test:e2e
+1 passed
+```

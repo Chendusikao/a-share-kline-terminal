@@ -1,4 +1,4 @@
-import type { AnalysisResponse } from "./types";
+import type { AnalysisResponse, IndicatorConfig } from "./types";
 
 export interface ChartSelection {
   overlays: string[];
@@ -9,6 +9,7 @@ interface TerminalSeries {
   name: string;
   type: string;
   data: unknown[];
+  lineStyle?: { color?: string; width?: number };
   [key: string]: unknown;
 }
 
@@ -27,6 +28,7 @@ export interface TerminalChartOption {
 export function buildKlineOption(
   analysis: AnalysisResponse,
   selection: ChartSelection,
+  indicatorConfig: IndicatorConfig,
 ): TerminalChartOption {
   const dates = analysis.candles.map((candle) => candle.date);
   const overlaySeries = selection.overlays.flatMap((key) => {
@@ -42,7 +44,10 @@ export function buildKlineOption(
             data: indicator.values,
             showSymbol: false,
             connectNulls: false,
-            lineStyle: { width: 1.2 },
+            lineStyle: {
+              color: indicatorColor(key, indicatorConfig),
+              width: 1.2,
+            },
           },
         ];
   });
@@ -59,7 +64,10 @@ export function buildKlineOption(
             data: oscillator.values,
             showSymbol: false,
             connectNulls: false,
-            lineStyle: { width: 1.2 },
+            lineStyle: {
+              color: indicatorColor(selection.oscillator, indicatorConfig),
+              width: 1.2,
+            },
           },
         ];
 
@@ -157,6 +165,33 @@ export function buildKlineOption(
       ...oscillatorSeries,
     ],
   };
+}
+
+function indicatorColor(
+  key: string,
+  config: IndicatorConfig,
+): string | undefined {
+  const maMatch = /^ma(\d+)$/.exec(key);
+  if (maMatch !== null) {
+    const period = Number(maMatch[1]);
+    const index = config.ma.periods.indexOf(period);
+    return index >= 0 ? config.ma.colors[index] : undefined;
+  }
+  const colors: Record<string, string> = {
+    macdDif: config.macd.difColor,
+    macdDea: config.macd.deaColor,
+    macdHistogram: config.macd.positiveColor,
+    kdjK: config.kdj.kColor,
+    kdjD: config.kdj.dColor,
+    kdjJ: config.kdj.jColor,
+    bollMiddle: config.boll.middleColor,
+    bollUpper: config.boll.upperColor,
+    bollLower: config.boll.lowerColor,
+    volumeMa20: config.volumeMa20.color,
+  };
+  if (key.startsWith("rsi")) return config.rsi.color;
+  if (key.startsWith("atr")) return config.atr.color;
+  return colors[key];
 }
 
 function displayIndicatorName(key: string): string {

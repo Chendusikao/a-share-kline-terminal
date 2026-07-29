@@ -81,23 +81,11 @@ export function loadPreferences(): Preferences {
     return defaultPreferences();
   }
   try {
-    const parsed = JSON.parse(raw) as Partial<Preferences>;
-    if (
-      parsed.version !== 1 ||
-      !Array.isArray(parsed.watchlist) ||
-      !Array.isArray(parsed.recent) ||
-      parsed.indicatorConfig === undefined ||
-      parsed.scoreWeights === undefined
-    ) {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPreferences(parsed)) {
       return defaultPreferences();
     }
-    return {
-      ...defaultPreferences(),
-      ...parsed,
-      version: 1,
-      watchlist: parsed.watchlist.filter(isSymbol).filter(unique).slice(0, 20),
-      recent: parsed.recent.filter(isSymbol).filter(unique).slice(0, 20),
-    };
+    return structuredClone(parsed);
   } catch {
     return defaultPreferences();
   }
@@ -152,6 +140,149 @@ function isSymbol(value: unknown): value is string {
   return typeof value === "string" && /^\d{6}$/.test(value);
 }
 
-function unique(value: string, index: number, values: string[]): boolean {
-  return values.indexOf(value) === index;
+function isPreferences(value: unknown): value is Preferences {
+  if (!isRecord(value)) return false;
+  return (
+    value.version === 1 &&
+    isSymbolList(value.watchlist) &&
+    isSymbolList(value.recent) &&
+    isIndicatorConfig(value.indicatorConfig) &&
+    isScoreWeights(value.scoreWeights)
+  );
+}
+
+function isIndicatorConfig(value: unknown): value is IndicatorConfig {
+  if (!isRecord(value)) return false;
+  const { ma, macd, rsi, kdj, boll, atr, volumeMa20 } = value;
+  return (
+    isRecord(ma) &&
+    typeof ma.enabled === "boolean" &&
+    isIntegerList(ma.periods, 1, 8, 2, 250) &&
+    new Set(ma.periods).size === ma.periods.length &&
+    isColorList(ma.colors, 1, 8) &&
+    isRecord(macd) &&
+    typeof macd.enabled === "boolean" &&
+    isInteger(macd.fast, 2, 250) &&
+    isInteger(macd.slow, 2, 250) &&
+    macd.fast < macd.slow &&
+    isInteger(macd.signal, 1, 250) &&
+    isHexColor(macd.difColor) &&
+    isHexColor(macd.deaColor) &&
+    isHexColor(macd.positiveColor) &&
+    isHexColor(macd.negativeColor) &&
+    isRecord(rsi) &&
+    typeof rsi.enabled === "boolean" &&
+    isInteger(rsi.period, 2, 100) &&
+    isHexColor(rsi.color) &&
+    isRecord(kdj) &&
+    typeof kdj.enabled === "boolean" &&
+    isInteger(kdj.period, 2, 100) &&
+    isInteger(kdj.kSmoothing, 1, 20) &&
+    isInteger(kdj.dSmoothing, 1, 20) &&
+    isHexColor(kdj.kColor) &&
+    isHexColor(kdj.dColor) &&
+    isHexColor(kdj.jColor) &&
+    isRecord(boll) &&
+    typeof boll.enabled === "boolean" &&
+    isInteger(boll.period, 2, 250) &&
+    isFiniteInRange(boll.standardDeviations, 0.5, 5) &&
+    isHexColor(boll.middleColor) &&
+    isHexColor(boll.upperColor) &&
+    isHexColor(boll.lowerColor) &&
+    isRecord(atr) &&
+    typeof atr.enabled === "boolean" &&
+    isInteger(atr.period, 2, 100) &&
+    isHexColor(atr.color) &&
+    isRecord(volumeMa20) &&
+    typeof volumeMa20.enabled === "boolean" &&
+    isHexColor(volumeMa20.color)
+  );
+}
+
+function isScoreWeights(value: unknown): value is ScoreWeights {
+  if (!isRecord(value)) return false;
+  const weights = [
+    value.trend,
+    value.momentum,
+    value.volumePrice,
+    value.position,
+    value.risk,
+  ];
+  return (
+    weights.every(
+      (weight) =>
+        typeof weight === "number" && Number.isFinite(weight) && weight >= 0,
+    ) && weights.some((weight) => Number(weight) > 0)
+  );
+}
+
+function isSymbolList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 20 &&
+    value.every(isSymbol) &&
+    new Set(value).size === value.length
+  );
+}
+
+function isColorList(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= minimum &&
+    value.length <= maximum &&
+    value.every(isHexColor)
+  );
+}
+
+function isIntegerList(
+  value: unknown,
+  minimumLength: number,
+  maximumLength: number,
+  minimumValue: number,
+  maximumValue: number,
+): value is number[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= minimumLength &&
+    value.length <= maximumLength &&
+    value.every((item) => isInteger(item, minimumValue, maximumValue))
+  );
+}
+
+function isInteger(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+function isFiniteInRange(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

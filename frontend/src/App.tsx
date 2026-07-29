@@ -262,11 +262,6 @@ function StockDetail() {
   const availableOverlays = Object.keys(data.indicators.series).filter((key) =>
     /^(ma\d+|boll)/.test(key),
   );
-  const keyPosition =
-    data.score.breakdown.position?.evidence.find((item) =>
-      item.metric.includes("20"),
-    ) ?? data.score.breakdown.position?.evidence[0];
-
   const toggleWatchlist = () => {
     const next = inWatchlist
       ? removeWatchlistSymbol(preferences, data.stock.symbol)
@@ -356,27 +351,21 @@ function StockDetail() {
 
       <div className="analysis-layout">
         <section className="chart-panel">
-          <KlineChart analysis={data} selection={{ overlays, oscillator }} />
+          <KlineChart
+            analysis={data}
+            selection={{ overlays, oscillator }}
+            indicatorConfig={preferences.indicatorConfig}
+          />
           <p className="chart-hint">滚轮缩放 · 拖动平移 · 悬停查看十字光标</p>
         </section>
-        <AnalysisRail data={data} keyPosition={keyPosition} />
+        <AnalysisRail data={data} />
       </div>
     </section>
   );
 }
 
-function AnalysisRail({
-  data,
-  keyPosition,
-}: {
-  data: AnalysisResponse;
-  keyPosition: AnalysisResponse["score"]["breakdown"]["position"] extends
-    undefined | { evidence: infer E }
-    ? E extends Array<infer Item>
-      ? Item | undefined
-      : never
-    : never;
-}) {
+function AnalysisRail({ data }: { data: AnalysisResponse }) {
+  const positionEvidence = data.score.breakdown.position?.evidence ?? [];
   return (
     <aside className="analysis-rail" aria-label="技术面解读">
       <section className="score-card">
@@ -411,11 +400,21 @@ function AnalysisRail({
         </div>
       </section>
 
-      {keyPosition?.value !== null && keyPosition?.value !== undefined && (
+      {positionEvidence.length > 0 && (
         <section className="position-card">
-          <span>关键位置</span>
-          <strong>近 20 日区间 {Math.round(keyPosition.value)}%</strong>
-          <small>{keyPosition.description}</small>
+          <span>关键位置证据</span>
+          {positionEvidence.map((evidence) => (
+            <div key={`${evidence.metric}-${evidence.description}`}>
+              <strong>{evidence.description}</strong>
+              <small>
+                {evidence.metric} · {evidence.comparison}
+                {evidence.value === null ? "" : ` · 数值 ${evidence.value}`}
+                {evidence.reference === null
+                  ? ""
+                  : ` · 参考 ${evidence.reference}`}
+              </small>
+            </div>
+          ))}
         </section>
       )}
 

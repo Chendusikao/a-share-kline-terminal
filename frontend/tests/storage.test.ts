@@ -22,6 +22,32 @@ describe("versioned local preferences", () => {
     expect(loadPreferences().watchlist).toEqual([]);
   });
 
+  it("falls back to complete defaults for corrupt nested version-one data", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        watchlist: ["000001"],
+        recent: [],
+        indicatorConfig: {
+          ma: { enabled: true, periods: "not-an-array" },
+        },
+        scoreWeights: {
+          trend: 35,
+          momentum: 25,
+          volumePrice: 15,
+          position: 15,
+        },
+      }),
+    );
+
+    const restored = loadPreferences();
+    expect(restored.watchlist).toEqual([]);
+    expect(restored.indicatorConfig.ma.periods).toEqual([5, 10, 20, 60]);
+    expect(restored.indicatorConfig.macd.slow).toBe(26);
+    expect(restored.scoreWeights.risk).toBe(10);
+  });
+
   it("persists configuration and restores it on the next load", () => {
     const preferences = loadPreferences();
     preferences.scoreWeights.trend = 48;

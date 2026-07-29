@@ -46,11 +46,11 @@ const analysis: AnalysisResponse = {
         weight: 15,
         evidence: [
           {
-            metric: "range_20",
+            metric: "backend_position_x",
             value: 82,
             comparison: "区间百分位",
             reference: 100,
-            description: "收盘价位于近 20 日区间 82% 位置",
+            description: "后端证据：靠近区间上沿",
           },
         ],
       },
@@ -165,7 +165,8 @@ describe("App routes", () => {
     expect(screen.getByText("68")).toBeInTheDocument();
     expect(screen.getByText("强")).toBeInTheDocument();
     expect(screen.getByText("价格运行在 MA20 上方")).toBeInTheDocument();
-    expect(screen.getByText("近 20 日区间 82%")).toBeInTheDocument();
+    expect(screen.getByText("后端证据：靠近区间上沿")).toBeInTheDocument();
+    expect(screen.queryByText(/近 20 日区间/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: "平安银行 K 线、成交量与副图" }),
     ).toBeInTheDocument();

@@ -755,14 +755,25 @@ td {
   font-size: 10px;
 }
 
-.position-card > strong {
-  color: #d7e2ef;
-  font: 500 15px var(--mono);
+.position-card > div {
+  display: grid;
+  gap: 5px;
 }
 
-.position-card > small {
+.position-card > div + div {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.position-card > div > strong {
+  color: #d7e2ef;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.position-card > div > small {
   color: var(--faint);
-  font-size: 10px;
+  font: 9px var(--mono);
   line-height: 1.5;
 }
 
