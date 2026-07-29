@@ -41,8 +41,14 @@ class ScoreWeights(BaseModel):
 
     @model_validator(mode="after")
     def require_positive_total(self) -> ScoreWeights:
-        if sum(self.model_dump().values()) <= 0:
+        raw = _raw_weights(self)
+        if not any(value > 0 for value in raw.values()):
             raise ValueError("at least one score weight must be greater than zero")
+        normalized = _decimal_percentages(raw)
+        if any(raw[name] > 0 and normalized[name] == 0 for name in COMPONENT_NAMES):
+            raise ValueError(
+                "positive score weights are too different in scale to normalize"
+            )
         return self
 
 
@@ -91,19 +97,34 @@ class _ComputedComponent:
 def normalize_weights(
     weights: ScoreWeights,
 ) -> dict[ComponentName, float]:
-    raw = weights.model_dump()
-    maximum = max(raw.values())
-    scaled = {name: raw[name] / maximum for name in COMPONENT_NAMES}
-    total = sum(scaled.values())
-    normalized = {
-        name: _clean_number(scaled[name] / total * 100) or 0.0
-        for name in COMPONENT_NAMES
-    }
+    raw = _raw_weights(weights)
+    normalized = _decimal_percentages(raw)
     last_positive = next(name for name in reversed(COMPONENT_NAMES) if raw[name] > 0)
     normalized[last_positive] = 100.0 - sum(
         normalized[name] for name in COMPONENT_NAMES if name != last_positive
     )
     return normalized
+
+
+def _raw_weights(weights: ScoreWeights) -> dict[ComponentName, float]:
+    return {
+        "trend": weights.trend,
+        "momentum": weights.momentum,
+        "volume_price": weights.volume_price,
+        "position": weights.position,
+        "risk": weights.risk,
+    }
+
+
+def _decimal_percentages(
+    raw: Mapping[ComponentName, float],
+) -> dict[ComponentName, float]:
+    decimal_values = {name: Decimal.from_float(raw[name]) for name in COMPONENT_NAMES}
+    total = sum(decimal_values.values(), start=Decimal(0))
+    return {
+        name: float(decimal_values[name] * Decimal(100) / total)
+        for name in COMPONENT_NAMES
+    }
 
 
 def grade_for_score(score: int) -> str:
@@ -137,10 +158,13 @@ def score_technical_analysis(
         "risk": _risk_component(ordered, indicators),
     }
     valid_trading_days = len({bar.trade_date for bar in ordered})
+    duplicate_trade_dates = valid_trading_days != len(ordered)
     history_available = valid_trading_days >= MINIMUM_HISTORY
     missing = [name for name, item in computed.items() if item.score is None]
-    available = history_available and not missing
-    if not history_available:
+    available = history_available and not duplicate_trade_dates and not missing
+    if duplicate_trade_dates:
+        reason = "duplicate_trade_dates"
+    elif not history_available:
         reason = f"insufficient_history:{MINIMUM_HISTORY}"
     elif missing:
         reason = f"missing_indicators:{','.join(missing)}"
@@ -429,6 +453,14 @@ def _build_insight(
     history_available: bool,
     unavailable_reason: str | None,
 ) -> Insight:
+    if unavailable_reason == "duplicate_trade_dates":
+        return Insight(
+            category,
+            "中性",
+            "行情数据包含重复交易日期（duplicate_trade_dates），不生成技术评分",
+            "低",
+            component.evidence,
+        )
     if not history_available:
         risk_count = _risk_count(component.evidence) if category == "risk" else 0
         direction: Direction = "风险" if risk_count else "中性"

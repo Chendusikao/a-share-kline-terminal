@@ -188,6 +188,37 @@ def test_large_finite_weights_normalize_without_aggregate_overflow() -> None:
     assert all(math.isfinite(value) for value in normalized.values())
 
 
+def test_unrepresentable_positive_weight_share_is_rejected() -> None:
+    from app.scoring import ScoreWeights
+
+    with pytest.raises(ValidationError, match="too different"):
+        ScoreWeights(
+            trend=1e-200,
+            momentum=1e200,
+            volume_price=0,
+            position=0,
+            risk=0,
+        )
+
+
+def test_representable_subnormal_effective_share_remains_positive() -> None:
+    from app.scoring import ScoreWeights, normalize_weights
+
+    normalized = normalize_weights(
+        ScoreWeights(
+            trend=5e-324,
+            momentum=1,
+            volume_price=1,
+            position=1,
+            risk=1,
+        )
+    )
+
+    assert normalized["trend"] > 0
+    assert all(value > 0 for value in normalized.values())
+    assert sum(normalized.values()) == 100
+
+
 @pytest.mark.parametrize(
     ("score", "expected"),
     [
@@ -410,10 +441,10 @@ def test_insufficient_history_returns_no_scores_but_visible_available_evidence()
     assert any(insight.evidence for insight in result.insights)
 
 
-def test_duplicate_dates_do_not_satisfy_eighty_valid_trading_day_gate() -> None:
+def test_duplicate_date_rejects_analysis_even_with_eighty_unique_dates() -> None:
     from app.scoring import score_technical_analysis
 
-    bars = _bars(80)
+    bars = _bars(81)
     bars[1] = MarketBar(
         trade_date=bars[0].trade_date,
         high=bars[1].high,
@@ -421,15 +452,17 @@ def test_duplicate_dates_do_not_satisfy_eighty_valid_trading_day_gate() -> None:
         close=bars[1].close,
         volume=bars[1].volume,
     )
-    indicators = _indicators(80)
+    indicators = _indicators(81)
     indicators.dates[1] = indicators.dates[0]
 
     result = score_technical_analysis(bars, indicators)
 
     assert result.available is False
-    assert result.reason == "insufficient_history:80"
+    assert result.reason == "duplicate_trade_dates"
     assert result.total_score is None
     assert result.grade is None
+    assert all(component.score is None for component in result.components.values())
+    assert all("重复交易日期" in insight.summary for insight in result.insights)
 
 
 def test_missing_indicators_use_missing_indicator_insight_reason() -> None:
