@@ -126,3 +126,24 @@ def test_gateway_turns_repeated_timeouts_into_retryable_data_unavailable() -> No
     assert captured.value.code == "DATA_UNAVAILABLE"
     assert captured.value.retryable is True
     assert source.attempts == 2
+
+
+def test_real_akshare_source_fails_closed_when_network_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.market_gateway import AkshareGateway, AkshareSource, DataUnavailableError
+
+    calls = 0
+
+    def unexpected_network_call(_source: AkshareSource) -> pd.DataFrame:
+        nonlocal calls
+        calls += 1
+        return pd.DataFrame()
+
+    monkeypatch.setenv("A_SHARE_ALLOW_AKSHARE_NETWORK", "0")
+    monkeypatch.setattr(AkshareSource, "fetch_stock_list", unexpected_network_call)
+
+    with pytest.raises(DataUnavailableError, match="disabled"):
+        AkshareGateway(attempts=1).fetch_stock_list()
+
+    assert calls == 0

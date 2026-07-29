@@ -1,7 +1,14 @@
 import type { ScoreWeights } from "./types";
 
 export function normalizeWeights(weights: ScoreWeights): ScoreWeights {
-  const values = Object.values(weights);
+  const keys = [
+    "trend",
+    "momentum",
+    "volumePrice",
+    "position",
+    "risk",
+  ] as const;
+  const values = keys.map((key) => weights[key]);
   if (values.some((value) => !Number.isFinite(value) || value < 0)) {
     throw new Error("评分权重必须是非负数");
   }
@@ -9,15 +16,22 @@ export function normalizeWeights(weights: ScoreWeights): ScoreWeights {
   if (total === 0) {
     throw new Error("至少一项权重必须大于 0");
   }
-  const percentage = (value: number) =>
-    Number(((value / total) * 100).toFixed(2));
-  return {
-    trend: percentage(weights.trend),
-    momentum: percentage(weights.momentum),
-    volumePrice: percentage(weights.volumePrice),
-    position: percentage(weights.position),
-    risk: percentage(weights.risk),
-  };
+  const normalized = Object.fromEntries(
+    keys.map((key) => [key, Number(((weights[key] / total) * 100).toFixed(2))]),
+  ) as unknown as ScoreWeights;
+  const lastPositive = [...keys].reverse().find((key) => weights[key] > 0);
+  if (lastPositive === undefined) {
+    throw new Error("至少一项权重必须大于 0");
+  }
+  normalized[lastPositive] = Number(
+    (
+      100 -
+      keys
+        .filter((key) => key !== lastPositive)
+        .reduce((sum, key) => sum + normalized[key], 0)
+    ).toFixed(2),
+  );
+  return normalized;
 }
 
 export function parseMaPeriods(value: string): number[] {

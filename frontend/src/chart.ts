@@ -1,4 +1,5 @@
 import type { AnalysisResponse, IndicatorConfig } from "./types";
+import { indicatorLabel, isIndicatorSeriesEnabled } from "./indicator-contract";
 
 export interface ChartSelection {
   overlays: string[];
@@ -37,11 +38,12 @@ export function buildKlineOption(
   const dates = analysis.candles.map((candle) => candle.date);
   const overlaySeries = selection.overlays.flatMap((key) => {
     const indicator = analysis.indicators.series[key];
-    return indicator === undefined
+    return indicator === undefined ||
+      !isIndicatorSeriesEnabled(key, indicatorConfig)
       ? []
       : [
           {
-            name: displayIndicatorName(key),
+            name: indicatorLabel(key, indicatorConfig),
             type: "line",
             xAxisIndex: 0,
             yAxisIndex: 0,
@@ -57,12 +59,13 @@ export function buildKlineOption(
   });
   const oscillator = analysis.indicators.series[selection.oscillator];
   const oscillatorSeries =
-    oscillator === undefined
+    oscillator === undefined ||
+    !isIndicatorSeriesEnabled(selection.oscillator, indicatorConfig)
       ? []
       : selection.oscillator === "macdHistogram"
         ? [
             {
-              name: displayIndicatorName(selection.oscillator),
+              name: indicatorLabel(selection.oscillator, indicatorConfig),
               type: "bar",
               xAxisIndex: 2,
               yAxisIndex: 2,
@@ -77,7 +80,7 @@ export function buildKlineOption(
           ]
         : [
             {
-              name: displayIndicatorName(selection.oscillator),
+              name: indicatorLabel(selection.oscillator, indicatorConfig),
               type: "line",
               xAxisIndex: 2,
               yAxisIndex: 2,
@@ -90,6 +93,25 @@ export function buildKlineOption(
               },
             },
           ];
+  const volumeMa = analysis.indicators.series.volumeMa20;
+  const volumeMaSeries =
+    volumeMa !== undefined && indicatorConfig.volumeMa20.enabled
+      ? [
+          {
+            name: indicatorLabel("volumeMa20", indicatorConfig),
+            type: "line",
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: volumeMa.values,
+            showSymbol: false,
+            connectNulls: false,
+            lineStyle: {
+              color: indicatorConfig.volumeMa20.color,
+              width: 1.2,
+            },
+          },
+        ]
+      : [];
 
   return {
     animation: false,
@@ -182,6 +204,7 @@ export function buildKlineOption(
         itemStyle: { color: "#49617d" },
       },
       ...overlaySeries,
+      ...volumeMaSeries,
       ...oscillatorSeries,
     ],
   };
@@ -209,27 +232,7 @@ function indicatorColor(
     bollLower: config.boll.lowerColor,
     volumeMa20: config.volumeMa20.color,
   };
-  if (key.startsWith("rsi")) return config.rsi.color;
-  if (key.startsWith("atr")) return config.atr.color;
+  if (key === "rsi") return config.rsi.color;
+  if (key === "atr") return config.atr.color;
   return colors[key];
-}
-
-function displayIndicatorName(key: string): string {
-  if (/^ma\d+$/.test(key)) {
-    return key.toUpperCase();
-  }
-  const labels: Record<string, string> = {
-    rsi14: "RSI14",
-    macdDif: "MACD DIF",
-    macdDea: "MACD DEA",
-    macdHistogram: "MACD",
-    kdjK: "KDJ K",
-    kdjD: "KDJ D",
-    kdjJ: "KDJ J",
-    atr14: "ATR14",
-    bollMiddle: "BOLL 中轨",
-    bollUpper: "BOLL 上轨",
-    bollLower: "BOLL 下轨",
-  };
-  return labels[key] ?? key;
 }

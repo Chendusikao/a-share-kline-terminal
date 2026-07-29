@@ -166,7 +166,7 @@ class ScanService:
             ScanRepository(session).mark_running(scan_id)
             session.commit()
         futures: dict[Future[ScanOutcome], str] = {
-            self._workers.submit(self._with_retries, symbol, request): symbol
+            self._workers.submit(self._analyze_symbol, symbol, request): symbol
             for symbol in request.symbols
         }
         for future in as_completed(futures):
@@ -200,15 +200,6 @@ class ScanService:
             repository.finish_run(scan_id, completed_at=self._clock())
             repository.retain_latest(30)
             session.commit()
-
-    def _with_retries(self, symbol: str, request: ScanRequest) -> ScanOutcome:
-        for attempt in range(3):
-            try:
-                return self._analyze_symbol(symbol, request)
-            except Exception:
-                if attempt == 2:
-                    raise
-        raise AssertionError("unreachable")
 
     def _analyze_from_candles(
         self,

@@ -93,4 +93,19 @@ describe("automatic scan eligibility", () => {
       ),
     ).toBe(false);
   });
+
+  it("does not auto scan a non-trading day even when the exchange date is older", () => {
+    expect(
+      shouldAutoStartScan(
+        {
+          marketDate: "2026-07-31",
+          status: "closed",
+          isOpen: false,
+          isTradingDay: false,
+        },
+        null,
+        new Date("2026-08-01T09:00:00.000Z"),
+      ),
+    ).toBe(false);
+  });
 });

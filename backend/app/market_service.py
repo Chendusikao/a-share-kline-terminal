@@ -17,6 +17,8 @@ from app.persistence import (
     StockRepository,
 )
 
+MAX_SCAN_CACHE_SYMBOLS = 100
+
 
 class MarketGateway(Protocol):
     def fetch_stock_list(self) -> pd.DataFrame: ...
@@ -241,7 +243,9 @@ class CandleService:
         candles: list[CandleRecord],
     ) -> None:
         with self._database.session() as session:
-            ScanCandleRepository(session).replace_symbol(symbol, candles)
+            repository = ScanCandleRepository(session)
+            repository.replace_symbol(symbol, candles)
+            repository.retain_latest_symbols(MAX_SCAN_CACHE_SYMBOLS)
             session.commit()
 
 

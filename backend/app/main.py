@@ -39,6 +39,7 @@ from app.api_models import (
     ValidationIssue,
     camelize_key,
 )
+from app.exchange_calendar import packaged_exchange_calendar
 from app.indicators import (
     IndicatorBundle,
     MarketBar,
@@ -100,6 +101,7 @@ def create_app(
     configured_database.create_schema()
     gateway = market_gateway or AkshareGateway()
     clock = now_provider or (lambda: datetime.now(UTC))
+    calendar = exchange_calendar or packaged_exchange_calendar()
     stock_catalog = StockCatalogService(configured_database, gateway)
     candle_service = CandleService(configured_database, gateway)
     scan_service = ScanService(
@@ -112,6 +114,7 @@ def create_app(
         docs_url=None,
         redoc_url=None,
     )
+    application.state.exchange_calendar = calendar
 
     @application.exception_handler(RequestValidationError)
     async def invalid_request(
@@ -168,7 +171,7 @@ def create_app(
         response_model=MarketStatusResponse,
     )
     def market_status() -> MarketStatusResponse:
-        return _market_status(clock(), exchange_calendar)
+        return _market_status(clock(), calendar)
 
     @application.get(
         "/api/v1/stocks/search",
@@ -252,10 +255,17 @@ def create_app(
     )
     def start_scan(request: ScanRequest) -> ScanAcceptedResponse:
         local_now = _shanghai_now(clock())
-        market = _market_status(local_now, exchange_calendar)
+        market = _market_status(local_now, calendar)
+        if market.market_date is None:
+            raise ApiProblem(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="DATA_UNAVAILABLE",
+                message="市场交易日历暂时不可用。",
+                retryable=False,
+            )
         scan_id = scan_service.start(
             request,
-            market_date=market.market_date or local_now.date(),
+            market_date=market.market_date,
         )
         return ScanAcceptedResponse(scan_id=scan_id)
 
@@ -442,13 +452,19 @@ def _indicator_response(bundle: IndicatorBundle) -> IndicatorsResponse:
     return IndicatorsResponse(
         dates=[date.fromisoformat(value) for value in bundle.dates],
         series={
-            camelize_key(name): IndicatorSeriesResponse(
+            _public_indicator_key(name): IndicatorSeriesResponse(
                 values=[_finite_or_none(value) for value in series.values],
                 reasons=series.reasons,
             )
             for name, series in bundle.series.items()
         },
     )
+
+
+def _public_indicator_key(name: str) -> str:
+    if name == "boll_mid":
+        return "bollMiddle"
+    return camelize_key(name)
 
 
 def _score_response(analysis: TechnicalAnalysis) -> ScoreResponse:

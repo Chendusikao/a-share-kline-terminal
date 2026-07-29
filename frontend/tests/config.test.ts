@@ -34,6 +34,16 @@ describe("settings helpers", () => {
       position: 20,
       risk: 20,
     });
+    const rounded = normalizeWeights({
+      trend: 1,
+      momentum: 1,
+      volumePrice: 1,
+      position: 1,
+      risk: 2,
+    });
+    expect(Object.values(rounded).reduce((sum, value) => sum + value, 0)).toBe(
+      100,
+    );
   });
 
   it("rejects all-zero weights and invalid MA periods", () => {

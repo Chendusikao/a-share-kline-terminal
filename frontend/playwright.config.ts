@@ -18,11 +18,15 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `${pythonCommand} -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
+    command: `${pythonCommand} -m uvicorn tests.support.offline_server:app --host 127.0.0.1 --port 8000`,
     cwd: path.resolve(frontendDirectory, "../backend"),
     url: "http://127.0.0.1:8000/api/v1/health",
     reuseExistingServer: false,
     timeout: 30_000,
+    env: {
+      ...process.env,
+      A_SHARE_ALLOW_AKSHARE_NETWORK: "0",
+    },
   },
   projects: [
     {

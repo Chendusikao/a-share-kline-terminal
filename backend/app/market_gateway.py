@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +70,7 @@ class AkshareGateway:
             raise ValueError("attempts must be at least one")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        self._uses_real_network = source is None
         self._source = source or AkshareSource()
         self._attempts = attempts
         self._timeout_seconds = timeout_seconds
@@ -76,6 +78,7 @@ class AkshareGateway:
         self._sleeper = sleeper
 
     def fetch_stock_list(self) -> pd.DataFrame:
+        self._require_network_permission()
         return self._with_retry(self._source.fetch_stock_list)
 
     def fetch_daily_candles(
@@ -85,6 +88,7 @@ class AkshareGateway:
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> pd.DataFrame:
+        self._require_network_permission()
         return self._with_retry(
             lambda: self._source.fetch_daily_candles(
                 symbol,
@@ -120,3 +124,13 @@ class AkshareGateway:
         raise DataUnavailableError(
             f"AKShare request failed after {self._attempts} attempts"
         ) from last_error
+
+    def _require_network_permission(self) -> None:
+        if (
+            self._uses_real_network
+            and os.getenv("A_SHARE_ALLOW_AKSHARE_NETWORK", "0") != "1"
+        ):
+            raise DataUnavailableError(
+                "AKShare network access is disabled; "
+                "set A_SHARE_ALLOW_AKSHARE_NETWORK=1 explicitly to enable it"
+            )

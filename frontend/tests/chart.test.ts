@@ -31,7 +31,8 @@ const analysis: AnalysisResponse = {
     dates: ["2026-07-28", "2026-07-29"],
     series: {
       ma20: { values: [10.2, 10.3], reasons: [null, null] },
-      rsi14: { values: [55, 52], reasons: [null, null] },
+      rsi: { values: [55, 52], reasons: [null, null] },
+      volumeMa20: { values: [950, 975], reasons: [null, null] },
     },
   },
   score: {
@@ -53,7 +54,7 @@ describe("K-line option mapping", () => {
       analysis,
       {
         overlays: ["ma20"],
-        oscillator: "rsi14",
+        oscillator: "rsi",
       },
       DEFAULT_INDICATOR_CONFIG,
     );
@@ -73,7 +74,7 @@ describe("K-line option mapping", () => {
       analysis,
       {
         overlays: ["ma20"],
-        oscillator: "rsi14",
+        oscillator: "rsi",
       },
       DEFAULT_INDICATOR_CONFIG,
     );
@@ -82,6 +83,7 @@ describe("K-line option mapping", () => {
       "日 K",
       "成交量",
       "MA20",
+      "20 日均量",
       "RSI14",
     ]);
     expect(option.series[2].data).toEqual([10.2, 10.3]);
@@ -97,18 +99,18 @@ describe("K-line option mapping", () => {
     configured.atr.color = "#667788";
     analysis.indicators.series = {
       ma20: { values: [1, 2], reasons: [null, null] },
-      rsi14: { values: [1, 2], reasons: [null, null] },
+      rsi: { values: [1, 2], reasons: [null, null] },
       kdjK: { values: [1, 2], reasons: [null, null] },
       bollUpper: { values: [1, 2], reasons: [null, null] },
       macdDif: { values: [1, 2], reasons: [null, null] },
-      atr14: { values: [1, 2], reasons: [null, null] },
+      atr: { values: [1, 2], reasons: [null, null] },
     };
 
     const option = buildKlineOption(
       analysis,
       {
         overlays: ["ma20", "bollUpper"],
-        oscillator: "rsi14",
+        oscillator: "rsi",
       },
       configured,
     );
@@ -135,7 +137,7 @@ describe("K-line option mapping", () => {
     expect(
       buildKlineOption(
         analysis,
-        { overlays: [], oscillator: "atr14" },
+        { overlays: [], oscillator: "atr" },
         configured,
       ).series.find((series) => series.name === "ATR14")?.lineStyle?.color,
     ).toBe("#667788");
@@ -163,5 +165,62 @@ describe("K-line option mapping", () => {
     expect(color({ value: 1 })).toBe("#aa1122");
     expect(color({ value: 0 })).toBe("#aa1122");
     expect(color({ value: -1 })).toBe("#11aa88");
+  });
+
+  it("uses the canonical API keys and suppresses every disabled indicator family", () => {
+    const configured = structuredClone(DEFAULT_INDICATOR_CONFIG);
+    configured.ma.enabled = false;
+    configured.macd.enabled = false;
+    configured.rsi.enabled = false;
+    configured.kdj.enabled = false;
+    configured.boll.enabled = false;
+    configured.atr.enabled = false;
+    configured.volumeMa20.enabled = false;
+    analysis.indicators.series = {
+      ma20: { values: [1, 2], reasons: [null, null] },
+      macdDif: { values: [1, 2], reasons: [null, null] },
+      rsi: { values: [50, 51], reasons: [null, null] },
+      kdjK: { values: [1, 2], reasons: [null, null] },
+      bollMiddle: { values: [1, 2], reasons: [null, null] },
+      atr: { values: [1, 2], reasons: [null, null] },
+      volumeMa20: { values: [900, 950], reasons: [null, null] },
+    };
+
+    for (const oscillator of ["macdDif", "rsi", "kdjK", "atr"]) {
+      const option = buildKlineOption(
+        analysis,
+        { overlays: ["ma20", "bollMiddle"], oscillator },
+        configured,
+      );
+      expect(option.series.map((series) => series.name)).toEqual([
+        "日 K",
+        "成交量",
+      ]);
+    }
+  });
+
+  it("keeps canonical RSI and ATR keys while labels follow configured periods", () => {
+    const configured = structuredClone(DEFAULT_INDICATOR_CONFIG);
+    configured.rsi.period = 21;
+    configured.atr.period = 7;
+    analysis.indicators.series = {
+      rsi: { values: [50, 51], reasons: [null, null] },
+      atr: { values: [1, 2], reasons: [null, null] },
+    };
+
+    expect(
+      buildKlineOption(
+        analysis,
+        { overlays: [], oscillator: "rsi" },
+        configured,
+      ).series.at(-1)?.name,
+    ).toBe("RSI21");
+    expect(
+      buildKlineOption(
+        analysis,
+        { overlays: [], oscillator: "atr" },
+        configured,
+      ).series.at(-1)?.name,
+    ).toBe("ATR7");
   });
 });

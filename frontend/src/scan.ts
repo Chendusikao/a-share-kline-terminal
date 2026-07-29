@@ -17,7 +17,12 @@ export function shouldAutoStartScan(
   latest: ScanStatus | null,
   now = new Date(),
 ): boolean {
-  if (market.marketDate === null || market.status !== "closed") return false;
+  if (
+    market.marketDate === null ||
+    market.status !== "closed" ||
+    !market.isTradingDay
+  )
+    return false;
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
       hour: "2-digit",

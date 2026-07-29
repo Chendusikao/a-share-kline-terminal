@@ -100,7 +100,7 @@ async function installMockApi(page: Page) {
           },
         ]),
       );
-      series.rsi14 = {
+      series.rsi = {
         values: dates.map(() => 58),
         reasons: dates.map(() => null),
       };
@@ -203,6 +203,31 @@ test("production server exposes health and the terminal shell", async ({
   await expect(page.getByText("批量扫描结果")).toBeVisible();
   await expect(page.getByText("数据来源：AKShare")).toBeVisible();
   await expect(page.getByText("不构成投资建议")).toBeVisible();
+});
+
+test("offline backend serves the real API contract for analysis and scanning", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.getByRole("searchbox", { name: "搜索股票" }).fill("000001");
+  await page.getByRole("link", { name: /平安银行/ }).click();
+
+  await expect(page.getByRole("heading", { name: "平安银行" })).toBeVisible();
+  await expect(page.getByLabel("副图指标")).toHaveValue("rsi");
+  await expect(
+    page.getByLabel("副图指标").locator('option[value="rsi"]'),
+  ).toHaveText("RSI14");
+  await expect(
+    page.getByRole("img", { name: "平安银行 K 线、成交量与副图" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "加入自选" }).click();
+  await page.getByRole("link", { name: "返回扫描" }).click();
+  await page.getByRole("button", { name: "运行扫描" }).click();
+
+  await expect(page.getByText("1/1 已完成")).toBeVisible();
+  await expect(page.locator("tbody").getByText("000001")).toBeVisible();
 });
 
 test("mocked user journey keeps analysis, settings, watchlist and scan state in sync", async ({

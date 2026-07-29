@@ -26,7 +26,7 @@ const analysis: AnalysisResponse = {
         values: Array.from({ length: 90 }, () => 10.2),
         reasons: Array.from({ length: 90 }, () => null),
       },
-      rsi14: {
+      rsi: {
         values: Array.from({ length: 90 }, () => 58),
         reasons: Array.from({ length: 90 }, () => null),
       },
@@ -330,7 +330,7 @@ describe("App routes", () => {
     fireEvent.click(screen.getByRole("button", { name: "近 6 月" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "MA20" }));
     fireEvent.change(screen.getByLabelText("副图指标"), {
-      target: { value: "rsi14" },
+      target: { value: "rsi" },
     });
 
     await waitFor(() => {

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 
 def test_catalog_replacement_removes_stale_rows_and_searches_code_or_name() -> None:
@@ -150,3 +150,51 @@ def test_database_schema_includes_scan_batches_and_per_symbol_results() -> None:
         "run_id",
         "symbol",
     }
+
+
+def test_sqlite_connections_enforce_foreign_keys() -> None:
+    from app.persistence import Database
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+
+    with database.session() as session:
+        enabled = session.scalar(text("PRAGMA foreign_keys"))
+
+    assert enabled == 1
+
+
+def test_scan_candle_cache_evicts_whole_old_symbols_globally() -> None:
+    from app.persistence import CandleRecord, Database, ScanCandleRepository
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+    fetched = datetime(2026, 7, 30, tzinfo=UTC)
+    with database.session() as session:
+        repository = ScanCandleRepository(session)
+        for index in range(101):
+            symbol = f"{index:06d}"
+            repository.replace_symbol(
+                symbol,
+                [
+                    CandleRecord(
+                        symbol,
+                        date(2026, 7, 30),
+                        10,
+                        11,
+                        9,
+                        10.5,
+                        1000,
+                        10500,
+                        "qfq",
+                        fetched + timedelta(seconds=index),
+                    )
+                ],
+            )
+        repository.retain_latest_symbols(100)
+        session.commit()
+
+    with database.session() as session:
+        repository = ScanCandleRepository(session)
+        assert repository.list_symbol("000000") == []
+        assert len(repository.list_symbol("000100")) == 1

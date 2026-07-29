@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 import app.main as main_module
+from app.exchange_calendar import LocalExchangeCalendar
 from app.indicators import IndicatorBundle, MarketBar
 from app.main import create_app
 from app.market_gateway import DataUnavailableError
@@ -193,9 +194,24 @@ def test_exchange_holiday_is_closed_even_when_it_falls_on_a_weekday() -> None:
     }
 
 
-def test_market_status_is_unavailable_without_an_exchange_calendar() -> None:
+def test_default_app_uses_the_packaged_exchange_calendar() -> None:
     response = _client(
         now=datetime(2026, 7, 30, 2, tzinfo=UTC),
+    ).get("/api/v1/market/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "marketDate": "2026-07-30",
+        "status": "open",
+        "isOpen": True,
+        "isTradingDay": True,
+    }
+    assert isinstance(main_module.app.state.exchange_calendar, LocalExchangeCalendar)
+
+
+def test_packaged_calendar_fails_closed_outside_its_published_range() -> None:
+    response = _client(
+        now=datetime(2027, 1, 4, 2, tzinfo=UTC),
     ).get("/api/v1/market/status")
 
     assert response.status_code == 200
@@ -281,7 +297,7 @@ def test_analysis_returns_candles_indicators_score_insights_and_cache_state() ->
         "kdjK",
         "kdjD",
         "kdjJ",
-        "bollMid",
+        "bollMiddle",
         "bollUpper",
         "bollLower",
         "atr",
@@ -625,6 +641,23 @@ def test_scan_routes_accept_work_and_expose_status_and_latest() -> None:
     assert status_response.json()["scanId"] == scan_id
     assert latest.status_code == 200
     assert latest.json()["scanId"] == scan_id
+
+
+def test_manual_scan_uses_the_exchange_market_date_instead_of_wall_clock_date() -> None:
+    client = _client(
+        now=datetime(2026, 8, 1, 2, tzinfo=UTC),
+        exchange_calendar=FakeExchangeCalendar({date(2026, 7, 31)}),
+    )
+
+    accepted = client.post(
+        "/api/v1/scans",
+        json={"symbols": ["000001"], "indicatorConfig": {}, "scoreWeights": {}},
+    )
+    scan_id = accepted.json()["scanId"]
+    status_response = client.get(f"/api/v1/scans/{scan_id}")
+
+    assert accepted.status_code == 202
+    assert status_response.json()["marketDate"] == "2026-07-31"
 
 
 def test_unknown_scan_uses_uniform_not_found_error() -> None:

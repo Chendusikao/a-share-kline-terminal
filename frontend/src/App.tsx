@@ -26,6 +26,7 @@ import {
 } from "./api";
 import { KlineChart } from "./KlineChart";
 import { normalizeWeights, parseMaPeriods } from "./config";
+import { indicatorLabel, indicatorPresentation } from "./indicator-contract";
 import { shouldAutoStartScan, sortScanRows } from "./scan";
 import {
   addRecentSymbol,
@@ -374,9 +375,12 @@ function cacheStatusLabel(
 function StockDetail() {
   const { symbol = "" } = useParams();
   const [range, setRange] = useState<AnalysisRange>("3y");
-  const [overlays, setOverlays] = useState(["ma20"]);
-  const [oscillator, setOscillator] = useState("rsi14");
   const [preferences, setPreferences] = useState(loadPreferences);
+  const presentation = indicatorPresentation(preferences.indicatorConfig);
+  const [overlays, setOverlays] = useState(() => presentation.overlays);
+  const [oscillator, setOscillator] = useState(
+    () => presentation.oscillators[0] ?? "",
+  );
   const analysis = useQuery({
     queryKey: [
       "analysis",
@@ -418,9 +422,15 @@ function StockDetail() {
 
   const data = analysis.data;
   const inWatchlist = preferences.watchlist.includes(data.stock.symbol);
-  const availableOverlays = Object.keys(data.indicators.series).filter((key) =>
-    /^(ma\d+|boll)/.test(key),
+  const availableOverlays = presentation.overlays.filter(
+    (key) => data.indicators.series[key] !== undefined,
   );
+  const availableOscillators = presentation.oscillators.filter(
+    (key) => data.indicators.series[key] !== undefined,
+  );
+  const effectiveOscillator = availableOscillators.includes(oscillator)
+    ? oscillator
+    : (availableOscillators[0] ?? "");
   const toggleWatchlist = () => {
     const next = inWatchlist
       ? removeWatchlistSymbol(preferences, data.stock.symbol)
@@ -476,7 +486,7 @@ function StockDetail() {
             <label key={key}>
               <input
                 type="checkbox"
-                aria-label={indicatorLabel(key)}
+                aria-label={indicatorLabel(key, preferences.indicatorConfig)}
                 checked={overlays.includes(key)}
                 onChange={() =>
                   setOverlays((current) =>
@@ -486,23 +496,24 @@ function StockDetail() {
                   )
                 }
               />
-              {indicatorLabel(key)}
+              {indicatorLabel(key, preferences.indicatorConfig)}
             </label>
           ))}
           <label>
             副图
             <select
               aria-label="副图指标"
-              value={oscillator}
+              value={effectiveOscillator}
               onChange={(event) => setOscillator(event.target.value)}
             >
-              {Object.keys(data.indicators.series)
-                .filter((key) => !/^(ma\d+|boll)/.test(key))
-                .map((key) => (
-                  <option key={key} value={key}>
-                    {indicatorLabel(key)}
-                  </option>
-                ))}
+              {availableOscillators.length === 0 && (
+                <option value="">未启用</option>
+              )}
+              {availableOscillators.map((key) => (
+                <option key={key} value={key}>
+                  {indicatorLabel(key, preferences.indicatorConfig)}
+                </option>
+              ))}
             </select>
           </label>
         </div>
@@ -518,7 +529,7 @@ function StockDetail() {
             <>
               <KlineChart
                 analysis={data}
-                selection={{ overlays, oscillator }}
+                selection={{ overlays, oscillator: effectiveOscillator }}
                 indicatorConfig={preferences.indicatorConfig}
               />
               <p className="chart-hint">
@@ -1026,24 +1037,6 @@ function CacheLabel({
       {labels[status]} {updatedAt}
     </span>
   );
-}
-
-function indicatorLabel(key: string): string {
-  if (/^ma\d+$/.test(key)) return key.toUpperCase();
-  const labels: Record<string, string> = {
-    rsi14: "RSI14",
-    macdDif: "MACD DIF",
-    macdDea: "MACD DEA",
-    macdHistogram: "MACD 柱",
-    kdjK: "KDJ K",
-    kdjD: "KDJ D",
-    kdjJ: "KDJ J",
-    bollMiddle: "BOLL 中轨",
-    bollUpper: "BOLL 上轨",
-    bollLower: "BOLL 下轨",
-    atr14: "ATR14",
-  };
-  return labels[key] ?? key;
 }
 
 function toPublicComponent(category: string): ComponentName {

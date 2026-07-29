@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -14,6 +15,8 @@ from sqlalchemy import (
     String,
     create_engine,
     delete,
+    event,
+    func,
     or_,
     select,
     update,
@@ -163,6 +166,8 @@ class Database:
             engine_options["poolclass"] = StaticPool
             engine_options["connect_args"] = {"check_same_thread": False}
         self.engine: Engine = create_engine(database_url, **engine_options)
+        if self.engine.dialect.name == "sqlite":
+            event.listen(self.engine, "connect", _enable_sqlite_foreign_keys)
         self._sessions = sessionmaker(self.engine, expire_on_commit=False)
 
     def create_schema(self) -> None:
@@ -308,6 +313,25 @@ class ScanCandleRepository:
         value = self._session.scalar(statement)
         return _as_aware_utc(value) if value is not None else None
 
+    def retain_latest_symbols(self, limit: int) -> None:
+        if limit < 1:
+            raise ValueError("scan candle symbol retention limit must be positive")
+        retained = list(
+            self._session.scalars(
+                select(ScanCandleModel.symbol)
+                .group_by(ScanCandleModel.symbol)
+                .order_by(
+                    func.max(ScanCandleModel.fetched_at).desc(),
+                    ScanCandleModel.symbol.desc(),
+                )
+                .limit(limit)
+            )
+        )
+        if retained:
+            self._session.execute(
+                delete(ScanCandleModel).where(ScanCandleModel.symbol.not_in(retained))
+            )
+
 
 class ScanRepository:
     def __init__(self, session: Session) -> None:
@@ -332,6 +356,9 @@ class ScanRepository:
                 completed_at=None,
             )
         )
+        # The models intentionally avoid ORM relationships, so flush the
+        # parent before inserting child rows when SQLite FK checks are active.
+        self._session.flush()
         self._session.add_all(
             ScanResultModel(
                 run_id=scan_id,
@@ -531,6 +558,17 @@ def _as_naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _enable_sqlite_foreign_keys(
+    dbapi_connection: Any,
+    _connection_record: Any,
+) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 
 
 def _as_aware_utc(value: datetime) -> datetime:

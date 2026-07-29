@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.api_models import ScanRequest
+from app.market_gateway import AkshareGateway
 from app.market_service import CandleService
 from app.persistence import CandleRepository, Database, ScanCandleRepository
 
@@ -22,7 +23,7 @@ def _wait_for_terminal(service: object, scan_id: str) -> object:
     raise AssertionError("scan did not finish")
 
 
-def test_scan_retries_each_failed_symbol_twice_and_limits_workers_to_three() -> None:
+def test_scan_limits_workers_to_three_and_isolates_failed_symbols() -> None:
     from app.scan_service import ScanOutcome, ScanService
 
     database = Database("sqlite+pysqlite:///:memory:")
@@ -68,9 +69,56 @@ def test_scan_retries_each_failed_symbol_twice_and_limits_workers_to_three() -> 
     ]
     assert result.errors[0].symbol == "000002"  # type: ignore[attr-defined]
     assert result.errors[0].message == "upstream timeout"  # type: ignore[attr-defined]
-    assert calls["000002"] == 3
+    assert calls["000002"] == 1
     assert all(count == 1 for symbol, count in calls.items() if symbol != "000002")
     assert peak == 3
+
+
+class AlwaysFailingAkshareSource:
+    def __init__(self) -> None:
+        self.candle_attempts = 0
+
+    def fetch_stock_list(self) -> pd.DataFrame:
+        raise AssertionError("stock catalog fetch is not expected")
+
+    def fetch_daily_candles(
+        self,
+        symbol: str,
+        *,
+        period: str,
+        adjustment: str,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame:
+        self.candle_attempts += 1
+        raise ConnectionError(f"{symbol} unavailable")
+
+
+def test_failed_scan_symbol_makes_three_total_data_attempts_through_real_layers() -> (
+    None
+):
+    from app.scan_service import ScanService
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+    source = AlwaysFailingAkshareSource()
+    gateway = AkshareGateway(
+        source=source,
+        attempts=3,
+        timeout_seconds=1,
+        retry_delay_seconds=0,
+    )
+    service = ScanService(database, CandleService(database, gateway))
+
+    scan_id = service.start(
+        ScanRequest(symbols=["000001"]),
+        market_date=date(2026, 7, 30),
+    )
+    result = _wait_for_terminal(service, scan_id)
+    service.shutdown()
+
+    assert result.errors[0].symbol == "000001"  # type: ignore[attr-defined]
+    assert source.candle_attempts == 3
 
 
 def test_same_market_date_request_is_deduplicated_unless_forced() -> None:
