@@ -10,6 +10,10 @@ interface TerminalSeries {
   type: string;
   data: unknown[];
   lineStyle?: { color?: string; width?: number };
+  itemStyle?: {
+    color?: string | ((params: { value: unknown }) => string);
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -55,21 +59,37 @@ export function buildKlineOption(
   const oscillatorSeries =
     oscillator === undefined
       ? []
-      : [
-          {
-            name: displayIndicatorName(selection.oscillator),
-            type: "line",
-            xAxisIndex: 2,
-            yAxisIndex: 2,
-            data: oscillator.values,
-            showSymbol: false,
-            connectNulls: false,
-            lineStyle: {
-              color: indicatorColor(selection.oscillator, indicatorConfig),
-              width: 1.2,
+      : selection.oscillator === "macdHistogram"
+        ? [
+            {
+              name: displayIndicatorName(selection.oscillator),
+              type: "bar",
+              xAxisIndex: 2,
+              yAxisIndex: 2,
+              data: oscillator.values,
+              itemStyle: {
+                color: ({ value }: { value: unknown }) =>
+                  typeof value === "number" && value < 0
+                    ? indicatorConfig.macd.negativeColor
+                    : indicatorConfig.macd.positiveColor,
+              },
             },
-          },
-        ];
+          ]
+        : [
+            {
+              name: displayIndicatorName(selection.oscillator),
+              type: "line",
+              xAxisIndex: 2,
+              yAxisIndex: 2,
+              data: oscillator.values,
+              showSymbol: false,
+              connectNulls: false,
+              lineStyle: {
+                color: indicatorColor(selection.oscillator, indicatorConfig),
+                width: 1.2,
+              },
+            },
+          ];
 
   return {
     animation: false,

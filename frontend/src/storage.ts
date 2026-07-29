@@ -160,6 +160,7 @@ function isIndicatorConfig(value: unknown): value is IndicatorConfig {
     isIntegerList(ma.periods, 1, 8, 2, 250) &&
     new Set(ma.periods).size === ma.periods.length &&
     isColorList(ma.colors, 1, 8) &&
+    ma.colors.length >= ma.periods.length &&
     isRecord(macd) &&
     typeof macd.enabled === "boolean" &&
     isInteger(macd.fast, 2, 250) &&

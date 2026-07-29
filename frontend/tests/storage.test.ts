@@ -48,6 +48,19 @@ describe("versioned local preferences", () => {
     expect(restored.scoreWeights.risk).toBe(10);
   });
 
+  it("rejects saved MA colors that do not cover every configured period", () => {
+    const incomplete = loadPreferences();
+    incomplete.watchlist = ["000001"];
+    incomplete.indicatorConfig.ma.colors =
+      incomplete.indicatorConfig.ma.colors.slice(0, 3);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(incomplete));
+
+    const restored = loadPreferences();
+    expect(restored.watchlist).toEqual([]);
+    expect(restored.indicatorConfig.ma.periods).toEqual([5, 10, 20, 60]);
+    expect(restored.indicatorConfig.ma.colors).toHaveLength(8);
+  });
+
   it("persists configuration and restores it on the next load", () => {
     const preferences = loadPreferences();
     preferences.scoreWeights.trend = 48;

@@ -173,3 +173,59 @@ vite production build completed
 npm run test:e2e
 1 passed
 ```
+
+---
+
+## Review Fix Round 2
+
+Follow-up commit: included with this report update.
+
+### Findings resolved
+
+1. A stored MA color array must now contain at least one color for every
+   configured MA period. An otherwise valid version `1` payload with fewer
+   colors than periods is rejected atomically and falls back to complete
+   defaults.
+2. `macdHistogram` is now rendered as a bar series. Its ECharts item-color
+   callback uses the persisted `positiveColor` for values greater than or equal
+   to zero and `negativeColor` for values below zero.
+
+The backend-evidence-only key-position presentation from review round 1 remains
+unchanged, as does the Task 6 scan boundary.
+
+### Root cause and TDD evidence
+
+- MA color coverage:
+  - Root cause: nested validation checked only that the color array contained
+    `1–8` valid hex values, without relating its length to the MA periods that
+    index into it.
+  - RED: a payload with four periods and three colors retained its non-default
+    watchlist instead of falling back.
+  - GREEN: the payload is rejected; default watchlist, periods, and complete
+    colors are restored.
+- MACD histogram polarity:
+  - Root cause: every oscillator was constructed as a line with one static
+    color, and `macdHistogram` was mapped only to `positiveColor`.
+  - RED: the histogram series type was `line` and had no item-color callback.
+  - GREEN: it is a `bar`; direct option assertions verify positive, zero, and
+    negative values return the configured positive, positive, and negative
+    colors respectively.
+
+### Review-fix verification
+
+Run from `frontend/`:
+
+```text
+npm run typecheck
+exit 0
+
+npm test
+5 test files passed
+21 tests passed
+
+npm run build
+vite production build completed
+
+npm run test:e2e
+1 passed
+```

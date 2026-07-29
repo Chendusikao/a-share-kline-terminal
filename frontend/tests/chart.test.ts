@@ -140,4 +140,28 @@ describe("K-line option mapping", () => {
       ).series.find((series) => series.name === "ATR14")?.lineStyle?.color,
     ).toBe("#667788");
   });
+
+  it("colors MACD histogram bars by their positive or negative sign", () => {
+    const configured = structuredClone(DEFAULT_INDICATOR_CONFIG);
+    configured.macd.positiveColor = "#aa1122";
+    configured.macd.negativeColor = "#11aa88";
+    analysis.indicators.series = {
+      macdHistogram: { values: [1, -1, 0], reasons: [null, null, null] },
+    };
+
+    const option = buildKlineOption(
+      analysis,
+      { overlays: [], oscillator: "macdHistogram" },
+      configured,
+    );
+    const histogram = option.series.find((series) => series.name === "MACD");
+    const color = histogram?.itemStyle?.color;
+
+    expect(histogram?.type).toBe("bar");
+    expect(typeof color).toBe("function");
+    if (typeof color !== "function") throw new Error("missing color callback");
+    expect(color({ value: 1 })).toBe("#aa1122");
+    expect(color({ value: 0 })).toBe("#aa1122");
+    expect(color({ value: -1 })).toBe("#11aa88");
+  });
 });
