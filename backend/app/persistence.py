@@ -6,9 +6,11 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from sqlalchemy import (
+    JSON,
     Date,
     DateTime,
     Float,
+    ForeignKey,
     String,
     create_engine,
     delete,
@@ -52,6 +54,43 @@ class DailyCandleModel(Base):
     amount: Mapped[float | None] = mapped_column(Float(), nullable=True)
     adjustment: Mapped[str] = mapped_column(String(8), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+
+
+class ScanRunModel(Base):
+    __tablename__ = "scan_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    market_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(),
+        nullable=True,
+    )
+
+
+class ScanResultModel(Base):
+    __tablename__ = "scan_results"
+
+    run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("scan_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    symbol: Mapped[str] = mapped_column(String(6), primary_key=True)
+    score: Mapped[float | None] = mapped_column(Float(), nullable=True)
+    grade: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    breakdown_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSON(),
+        nullable=True,
+    )
+    insights_json: Mapped[list[dict[str, object]] | None] = mapped_column(
+        JSON(),
+        nullable=True,
+    )
+    data_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 @dataclass(frozen=True, slots=True)

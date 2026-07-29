@@ -90,6 +90,35 @@ class RangeGateway:
         return pd.DataFrame(rows)
 
 
+class PartiallyMalformedCandleGateway:
+    def fetch_stock_list(self) -> pd.DataFrame:
+        raise AssertionError("catalog fetch is not expected")
+
+    def fetch_daily_candles(self, symbol: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "日期": "2026-07-30",
+                    "开盘": 20.0,
+                    "最高": 21.0,
+                    "最低": 19.0,
+                    "收盘": 20.5,
+                    "成交量": 2000,
+                    "成交额": 41000,
+                },
+                {
+                    "日期": "2026-07-31",
+                    "开盘": 21.0,
+                    "最高": 22.0,
+                    "最低": 20.0,
+                    "收盘": float("nan"),
+                    "成交量": 2200,
+                    "成交额": 46200,
+                },
+            ]
+        )
+
+
 def test_stock_catalog_refreshes_once_per_day_and_searches_cached_names() -> None:
     try:
         from app.market_service import StockCatalogService
@@ -228,3 +257,36 @@ def test_candle_ranges_use_latest_market_date_and_default_to_three_years() -> No
 
     with pytest.raises(ValueError, match="unsupported candle range"):
         service.get("000001", now=now, range_name="2y")
+
+
+def test_malformed_refresh_preserves_complete_stale_candle_cache() -> None:
+    from app.market_service import CandleService
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+    cached_at = datetime(2026, 7, 29, 16, tzinfo=UTC)
+    CandleService(database, CandleGateway()).get("000001", now=cached_at)
+
+    result = CandleService(database, PartiallyMalformedCandleGateway()).get(
+        "000001",
+        now=cached_at + timedelta(days=1),
+        range_name="all",
+    )
+
+    assert [candle.close for candle in result.candles] == [10.5, 11.5]
+    assert result.updated_at == cached_at
+    assert result.from_cache is True
+    assert result.stale is True
+
+
+def test_malformed_refresh_without_cache_is_data_unavailable() -> None:
+    from app.market_service import CandleService
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+
+    with pytest.raises(DataUnavailableError):
+        CandleService(database, PartiallyMalformedCandleGateway()).get(
+            "000001",
+            now=datetime(2026, 7, 30, 16, tzinfo=UTC),
+        )

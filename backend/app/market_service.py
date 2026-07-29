@@ -183,26 +183,53 @@ def _candle_records(
     }
     amount_column = _find_column(frame, "成交额", "amount", required=False)
     records: dict[date, CandleRecord] = {}
-    for row in frame.to_dict("records"):
+    for row_number, row in enumerate(frame.to_dict("records"), start=1):
         try:
-            trade_date = pd.Timestamp(row[columns["date"]]).date()
+            trade_timestamp = pd.Timestamp(row[columns["date"]])
+            if pd.isna(trade_timestamp):
+                raise ValueError("trade date is missing")
+            trade_date = trade_timestamp.date()
             open_value = _finite_float(row[columns["open"]])
             high_value = _finite_float(row[columns["high"]])
             low_value = _finite_float(row[columns["low"]])
             close_value = _finite_float(row[columns["close"]])
             volume_value = _finite_float(row[columns["volume"]])
-        except (TypeError, ValueError):
-            continue
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise DataUnavailableError(
+                f"AKShare returned a malformed candle at row {row_number}"
+            ) from error
+        if min(open_value, high_value, low_value, close_value) <= 0:
+            raise DataUnavailableError(
+                f"AKShare returned a non-positive price at row {row_number}"
+            )
+        if volume_value < 0:
+            raise DataUnavailableError(
+                f"AKShare returned negative volume at row {row_number}"
+            )
         if high_value < max(open_value, close_value, low_value):
-            continue
+            raise DataUnavailableError(
+                f"AKShare returned an invalid high at row {row_number}"
+            )
         if low_value > min(open_value, close_value, high_value):
-            continue
+            raise DataUnavailableError(
+                f"AKShare returned an invalid low at row {row_number}"
+            )
         amount_value: float | None = None
         if amount_column is not None and not pd.isna(row.get(amount_column)):
             try:
                 amount_value = _finite_float(row[amount_column])
-            except (TypeError, ValueError):
-                amount_value = None
+            except (KeyError, TypeError, ValueError) as error:
+                raise DataUnavailableError(
+                    f"AKShare returned invalid amount at row {row_number}"
+                ) from error
+            if amount_value < 0:
+                raise DataUnavailableError(
+                    f"AKShare returned negative amount at row {row_number}"
+                )
+        if trade_date in records:
+            raise DataUnavailableError(
+                f"AKShare returned duplicate date at row {row_number}"
+            )
         records[trade_date] = CandleRecord(
             symbol,
             trade_date,

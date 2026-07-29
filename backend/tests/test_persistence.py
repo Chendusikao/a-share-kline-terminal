@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy import inspect
 
 
 def test_catalog_replacement_removes_stale_rows_and_searches_code_or_name() -> None:
@@ -117,3 +118,35 @@ def test_replacing_forward_adjusted_candles_removes_obsolete_history() -> None:
     assert candles[0].close == 5.75
     assert candles[0].adjustment == "qfq"
     assert candles[0].fetched_at == second_fetch
+
+
+def test_database_schema_includes_scan_batches_and_per_symbol_results() -> None:
+    from app.persistence import Database
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+    inspector = inspect(database.engine)
+
+    assert {column["name"] for column in inspector.get_columns("scan_runs")} == {
+        "id",
+        "market_date",
+        "config_hash",
+        "status",
+        "created_at",
+        "completed_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("scan_results")} == {
+        "run_id",
+        "symbol",
+        "score",
+        "grade",
+        "breakdown_json",
+        "insights_json",
+        "data_status",
+        "error_code",
+    }
+    assert inspector.get_pk_constraint("scan_runs")["constrained_columns"] == ["id"]
+    assert set(inspector.get_pk_constraint("scan_results")["constrained_columns"]) == {
+        "run_id",
+        "symbol",
+    }

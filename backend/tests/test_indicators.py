@@ -31,6 +31,43 @@ def test_indicator_config_has_documented_defaults() -> None:
     assert config.atr.period == 14
 
 
+def test_indicator_config_has_visible_defaults_and_validated_colors() -> None:
+    from app.indicators import IndicatorConfig
+
+    config = IndicatorConfig()
+
+    assert config.ma.enabled is True
+    assert config.ma.colors[:4] == [
+        "#F6C85F",
+        "#6F4EED",
+        "#42C2FF",
+        "#EF6F6C",
+    ]
+    assert config.macd.enabled is True
+    assert config.macd.positive_color == "#EF5350"
+    assert config.macd.negative_color == "#26A69A"
+    assert config.rsi.enabled is True
+    assert config.kdj.enabled is True
+    assert config.boll.enabled is True
+    assert config.atr.enabled is True
+    assert config.volume_ma20.enabled is True
+
+    customized = IndicatorConfig.model_validate(
+        {
+            "ma": {"enabled": False, "colors": ["#112233"]},
+            "rsi": {"color": "#abcdef"},
+            "volume_ma20": {"enabled": False, "color": "#AABBCC"},
+        }
+    )
+    assert customized.ma.enabled is False
+    assert customized.ma.colors == ["#112233"]
+    assert customized.rsi.color == "#abcdef"
+    assert customized.volume_ma20.enabled is False
+
+    with pytest.raises(ValidationError):
+        IndicatorConfig.model_validate({"atr": {"color": "orange"}})
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

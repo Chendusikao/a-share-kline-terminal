@@ -4,9 +4,18 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import Annotated
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
+
+HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]
 
 
 class StrictConfigModel(BaseModel):
@@ -14,8 +23,23 @@ class StrictConfigModel(BaseModel):
 
 
 class MaConfig(StrictConfigModel):
+    enabled: bool = True
     periods: list[int] = Field(
         default_factory=lambda: [5, 10, 20, 60],
+        min_length=1,
+        max_length=8,
+    )
+    colors: list[HexColor] = Field(
+        default_factory=lambda: [
+            "#F6C85F",
+            "#6F4EED",
+            "#42C2FF",
+            "#EF6F6C",
+            "#8BD17C",
+            "#B6992D",
+            "#5F6B6D",
+            "#D45087",
+        ],
         min_length=1,
         max_length=8,
     )
@@ -30,9 +54,14 @@ class MaConfig(StrictConfigModel):
 
 
 class MacdConfig(StrictConfigModel):
+    enabled: bool = True
     fast: int = Field(default=12, ge=2, le=250)
     slow: int = Field(default=26, ge=2, le=250)
     signal: int = Field(default=9, ge=1, le=250)
+    dif_color: HexColor = "#F6C85F"
+    dea_color: HexColor = "#42C2FF"
+    positive_color: HexColor = "#EF5350"
+    negative_color: HexColor = "#26A69A"
 
     @model_validator(mode="after")
     def validate_order(self) -> MacdConfig:
@@ -42,22 +71,39 @@ class MacdConfig(StrictConfigModel):
 
 
 class RsiConfig(StrictConfigModel):
+    enabled: bool = True
     period: int = Field(default=14, ge=2, le=100)
+    color: HexColor = "#AB47BC"
 
 
 class KdjConfig(StrictConfigModel):
+    enabled: bool = True
     period: int = Field(default=9, ge=2, le=100)
     k_smoothing: int = Field(default=3, ge=1, le=20)
     d_smoothing: int = Field(default=3, ge=1, le=20)
+    k_color: HexColor = "#F6C85F"
+    d_color: HexColor = "#42C2FF"
+    j_color: HexColor = "#AB47BC"
 
 
 class BollConfig(StrictConfigModel):
+    enabled: bool = True
     period: int = Field(default=20, ge=2, le=250)
     standard_deviations: float = Field(default=2, ge=0.5, le=5)
+    middle_color: HexColor = "#F6C85F"
+    upper_color: HexColor = "#EF5350"
+    lower_color: HexColor = "#26A69A"
 
 
 class AtrConfig(StrictConfigModel):
+    enabled: bool = True
     period: int = Field(default=14, ge=2, le=100)
+    color: HexColor = "#FF9800"
+
+
+class VolumeMaConfig(StrictConfigModel):
+    enabled: bool = True
+    color: HexColor = "#42C2FF"
 
 
 class IndicatorConfig(StrictConfigModel):
@@ -67,6 +113,7 @@ class IndicatorConfig(StrictConfigModel):
     kdj: KdjConfig = Field(default_factory=KdjConfig)
     boll: BollConfig = Field(default_factory=BollConfig)
     atr: AtrConfig = Field(default_factory=AtrConfig)
+    volume_ma20: VolumeMaConfig = Field(default_factory=VolumeMaConfig)
 
 
 @dataclass(frozen=True, slots=True)
