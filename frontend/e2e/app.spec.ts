@@ -221,6 +221,7 @@ test("mocked user journey keeps analysis, settings, watchlist and scan state in 
   await expect(
     page.getByText("前复权日线 · 行情日期 2026-07-30", { exact: false }),
   ).toBeVisible();
+  await expect(page.getByText("缓存命中 2026-07-30")).toBeVisible();
   await expect(page.getByText("68", { exact: true })).toBeVisible();
   await expect(
     page.locator(".insight-list p").getByText("MA20 上方，参数已同步"),
@@ -251,6 +252,8 @@ test("mocked user journey keeps analysis, settings, watchlist and scan state in 
   await expect(page.getByText("均线与评分配置同步")).toBeVisible();
   await expect(page.getByText("72", { exact: true })).toBeVisible();
 
+  // Browser reload proves client preference restoration. Backend process
+  // restart recovery is covered by test_startup_recovery_marks_incomplete_runs_failed_and_retains_latest_thirty.
   await page.reload();
   await expect(page.getByText("1 / 20 只自选")).toBeVisible();
   await expect(page.getByText("1/1 已完成")).toBeVisible();

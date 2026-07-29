@@ -61,8 +61,14 @@ so the test cannot contact AKShare. It verifies:
 4. return to detail and confirm MA controls plus evidence reflect the saved
    request configuration;
 5. add the symbol to the watchlist and complete a batch scan;
-6. reload the application and confirm watchlist, scan result, MA periods, and
-   weights are restored.
+6. reload the browser application and confirm the client-persisted watchlist,
+   MA periods, and weights are restored. This is a browser/localStorage
+   persistence check, not a backend process restart.
+
+Backend restart recovery is separately covered by
+`test_startup_recovery_marks_incomplete_runs_failed_and_retains_latest_thirty`,
+which reconstructs persisted scan state, marks incomplete runs failed, and
+retains the latest 30 batches.
 
 The existing production-server Playwright test continues to verify the health
 endpoint, terminal shell, and required disclosures.
@@ -127,3 +133,43 @@ npm run test:e2e
 
 The production build retains the existing non-failing advisory that the
 ECharts bundle is larger than 500 kB.
+
+---
+
+## Review Fix Round 1
+
+### Findings resolved
+
+1. The mocked Playwright detail flow now visibly asserts
+   `缓存命中 2026-07-30` when the analysis fixture returns
+   `cache.status = "cache"`, proving that cache provenance reaches the user.
+2. The acceptance report no longer treats `page.reload()` as a backend
+   restart. Browser reload covers localStorage restoration; persisted scan
+   restart recovery remains independently verified by the backend startup
+   recovery test.
+
+### Review-fix verification
+
+```text
+npm run format:check
+All matched files use Prettier code style!
+
+npm run typecheck
+exit 0
+
+npm test
+5 test files passed
+25 tests passed
+
+npm run build
+production build completed
+
+npm run test:e2e
+2 passed
+
+python -m pytest
+109 passed
+
+git diff --check
+exit 0
+```
