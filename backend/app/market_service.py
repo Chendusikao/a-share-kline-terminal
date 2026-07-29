@@ -12,6 +12,7 @@ from app.persistence import (
     CandleRecord,
     CandleRepository,
     Database,
+    ScanCandleRepository,
     StockRecord,
     StockRepository,
 )
@@ -103,12 +104,9 @@ class CandleService:
         now: datetime,
         force_refresh: bool = False,
         range_name: str = "3y",
-        history_limit: int | None = None,
     ) -> CandleData:
         if range_name not in {"3m", "6m", "1y", "3y", "all"}:
             raise ValueError(f"unsupported candle range: {range_name}")
-        if history_limit is not None and history_limit < 1:
-            raise ValueError("history limit must be positive")
         current_time = _aware_utc(now)
         with self._database.session() as session:
             repository = CandleRepository(session)
@@ -119,29 +117,13 @@ class CandleService:
         if cached and is_fresh and not force_refresh:
             assert updated_at is not None
             return _slice_candle_data(
-                _limit_candle_data(
-                    CandleData(cached, updated_at, from_cache=True, stale=False),
-                    history_limit,
-                ),
+                CandleData(cached, updated_at, from_cache=True, stale=False),
                 range_name,
             )
 
         try:
-            if history_limit is None:
-                frame = self._gateway.fetch_daily_candles(symbol)
-            else:
-                end_date = now.date()
-                start_date = end_date - timedelta(
-                    days=math.ceil(history_limit * 7 / 5) + 30
-                )
-                frame = self._gateway.fetch_daily_candles(
-                    symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
+            frame = self._gateway.fetch_daily_candles(symbol)
             replacement = _candle_records(frame, symbol, current_time)
-            if history_limit is not None:
-                replacement = replacement[-history_limit:]
             if not replacement:
                 raise DataUnavailableError("AKShare returned no valid candle data")
             with self._database.session() as session:
@@ -160,18 +142,107 @@ class CandleService:
         except DataUnavailableError:
             if cached and updated_at is not None:
                 return _slice_candle_data(
-                    _limit_candle_data(
-                        CandleData(
-                            cached,
-                            updated_at,
-                            from_cache=True,
-                            stale=True,
-                        ),
-                        history_limit,
+                    CandleData(
+                        cached,
+                        updated_at,
+                        from_cache=True,
+                        stale=True,
                     ),
                     range_name,
                 )
             raise
+
+    def get_for_scan(
+        self,
+        symbol: str,
+        *,
+        now: datetime,
+        history_limit: int,
+        force_refresh: bool = False,
+    ) -> CandleData:
+        if history_limit < 1:
+            raise ValueError("history limit must be positive")
+        current_time = _aware_utc(now)
+        with self._database.session() as session:
+            detail_repository = CandleRepository(session)
+            scan_repository = ScanCandleRepository(session)
+            detail_cached = detail_repository.list_symbol(symbol)
+            detail_updated_at = detail_repository.latest_fetched_at(symbol)
+            scan_cached = scan_repository.list_symbol(symbol)
+            scan_updated_at = scan_repository.latest_fetched_at(symbol)
+
+        if not force_refresh:
+            if (
+                detail_cached
+                and detail_updated_at is not None
+                and _same_local_day(detail_updated_at, now)
+            ):
+                bounded = detail_cached[-history_limit:]
+                self._replace_scan_cache(symbol, bounded)
+                return CandleData(
+                    bounded,
+                    detail_updated_at,
+                    from_cache=True,
+                    stale=False,
+                )
+            if (
+                scan_cached
+                and scan_updated_at is not None
+                and _same_local_day(scan_updated_at, now)
+                and len(scan_cached) >= history_limit
+            ):
+                bounded = scan_cached[-history_limit:]
+                if len(bounded) != len(scan_cached):
+                    self._replace_scan_cache(symbol, bounded)
+                return CandleData(
+                    bounded,
+                    scan_updated_at,
+                    from_cache=True,
+                    stale=False,
+                )
+
+        try:
+            end_date = now.date()
+            start_date = end_date - timedelta(
+                days=math.ceil(history_limit * 7 / 5) + 30
+            )
+            frame = self._gateway.fetch_daily_candles(
+                symbol,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            replacement = _candle_records(frame, symbol, current_time)[-history_limit:]
+            if not replacement:
+                raise DataUnavailableError("AKShare returned no valid candle data")
+            self._replace_scan_cache(symbol, replacement)
+            return CandleData(
+                replacement,
+                current_time,
+                from_cache=False,
+                stale=False,
+            )
+        except DataUnavailableError:
+            fallback = detail_cached or scan_cached
+            fallback_updated_at = detail_updated_at or scan_updated_at
+            if fallback and fallback_updated_at is not None:
+                bounded = fallback[-history_limit:]
+                self._replace_scan_cache(symbol, bounded)
+                return CandleData(
+                    bounded,
+                    fallback_updated_at,
+                    from_cache=True,
+                    stale=True,
+                )
+            raise
+
+    def _replace_scan_cache(
+        self,
+        symbol: str,
+        candles: list[CandleRecord],
+    ) -> None:
+        with self._database.session() as session:
+            ScanCandleRepository(session).replace_symbol(symbol, candles)
+            session.commit()
 
 
 def _stock_records(frame: pd.DataFrame, updated_at: datetime) -> list[StockRecord]:
@@ -327,20 +398,6 @@ def _slice_candle_data(data: CandleData, range_name: str) -> CandleData:
     cutoff = (latest - offsets[range_name]).date()
     return CandleData(
         [candle for candle in data.candles if candle.trade_date >= cutoff],
-        data.updated_at,
-        data.from_cache,
-        data.stale,
-    )
-
-
-def _limit_candle_data(
-    data: CandleData,
-    history_limit: int | None,
-) -> CandleData:
-    if history_limit is None or len(data.candles) <= history_limit:
-        return data
-    return CandleData(
-        data.candles[-history_limit:],
         data.updated_at,
         data.from_cache,
         data.stale,

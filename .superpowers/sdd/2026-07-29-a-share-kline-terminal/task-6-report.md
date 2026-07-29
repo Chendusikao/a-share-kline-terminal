@@ -138,3 +138,52 @@ Success: no issues found in 17 source files
 pytest
 108 passed
 ```
+
+---
+
+## Review Fix Round 2
+
+### Finding resolved
+
+The scanner and detail page now use separate candle persistence:
+
+- `daily_candles` remains the full-history detail cache;
+- `scan_daily_candles` stores only the currently derived scanner window.
+
+`CandleService.get_for_scan` prefers a fresh full detail cache without making a
+network request, copies only the required tail into the bounded scan cache, and
+leaves the detail cache unchanged. A bounded network response is likewise
+written only to the scan cache, so a later detail request can still acquire and
+retain complete history. Fresh scan-cache reuse also shrinks an oversized
+window and refetches when the cached window is too short for a larger config.
+
+### Root cause and TDD evidence
+
+- Root cause: round 1 put bounded scanner data into the detail cache. On a
+  cache miss that truncated later detail history; on a fresh-cache hit it
+  sliced only the returned object and left full history as scanner
+  persistence. One table could not preserve both contracts.
+- RED: the new real-service tests failed because no separate
+  `ScanCandleRepository` existed.
+- GREEN:
+  - cache miss: a 170-bar configuration leaves `daily_candles` empty and
+    persists exactly 170 rows in `scan_daily_candles`;
+  - fresh cache: a prepopulated 600-row detail cache remains at 600 rows, the
+    scan cache contains exactly the required 80, the detail service still
+    returns all 600, and the gateway is called only for the original detail
+    load.
+
+### Review-fix verification
+
+Run from `backend/`:
+
+```text
+ruff check app tests
+All checks passed
+
+mypy app tests
+Success: no issues found in 17 source files
+
+pytest
+109 passed
+```

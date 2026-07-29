@@ -9,7 +9,7 @@ import pandas as pd
 
 from app.api_models import ScanRequest
 from app.market_service import CandleService
-from app.persistence import CandleRepository, Database
+from app.persistence import CandleRepository, Database, ScanCandleRepository
 
 
 def _wait_for_terminal(service: object, scan_id: str) -> object:
@@ -106,6 +106,7 @@ def test_same_market_date_request_is_deduplicated_unless_forced() -> None:
 class BoundedHistoryGateway:
     def __init__(self) -> None:
         self.requested_window: tuple[date | None, date | None] | None = None
+        self.candle_calls = 0
 
     def fetch_stock_list(self) -> pd.DataFrame:
         raise AssertionError("stock catalog fetch is not expected")
@@ -117,6 +118,7 @@ class BoundedHistoryGateway:
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> pd.DataFrame:
+        self.candle_calls += 1
         self.requested_window = (start_date, end_date)
         first_day = date(2024, 1, 1)
         rows = []
@@ -173,8 +175,46 @@ def test_real_scan_requests_and_persists_only_derived_score_history(
     assert end_date == now.date()
     assert start_date < end_date
     with database.session() as session:
-        persisted = CandleRepository(session).list_symbol("000001")
-    assert len(persisted) == 170
+        detail_cache = CandleRepository(session).list_symbol("000001")
+        scan_cache = ScanCandleRepository(session).list_symbol("000001")
+    assert detail_cache == []
+    assert len(scan_cache) == 170
+
+
+def test_fresh_full_detail_cache_populates_bounded_scan_cache_without_truncation(
+    tmp_path: Path,
+) -> None:
+    from app.scan_service import ScanService
+
+    database = Database(tmp_path / "fresh-cache.sqlite3")
+    database.create_schema()
+    gateway = BoundedHistoryGateway()
+    now = datetime(2026, 7, 30, 16, tzinfo=UTC)
+    candle_service = CandleService(database, gateway)
+    detail = candle_service.get("000001", now=now, range_name="all")
+    assert len(detail.candles) == 600
+
+    service = ScanService(
+        database,
+        candle_service,
+        now_provider=lambda: now,
+    )
+    scan_id = service.start(
+        ScanRequest(symbols=["000001"]),
+        market_date=date(2026, 7, 30),
+    )
+    result = _wait_for_terminal(service, scan_id)
+    service.shutdown()
+
+    assert result.results[0].score is not None  # type: ignore[attr-defined]
+    with database.session() as session:
+        detail_cache = CandleRepository(session).list_symbol("000001")
+        scan_cache = ScanCandleRepository(session).list_symbol("000001")
+    assert len(detail_cache) == 600
+    assert len(scan_cache) == 80
+    detail_again = candle_service.get("000001", now=now, range_name="all")
+    assert len(detail_again.candles) == 600
+    assert gateway.candle_calls == 1
 
 
 def test_startup_recovery_marks_incomplete_runs_failed_and_retains_latest_thirty() -> (

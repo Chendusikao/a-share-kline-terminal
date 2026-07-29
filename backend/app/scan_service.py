@@ -217,7 +217,7 @@ class ScanService:
     ) -> ScanOutcome:
         assert self._candle_service is not None
         history_size = required_scan_history(request)
-        candle_data = self._candle_service.get(
+        candle_data = self._candle_service.get_for_scan(
             symbol,
             now=self._clock(),
             force_refresh=request.force_refresh,

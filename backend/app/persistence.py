@@ -57,6 +57,21 @@ class DailyCandleModel(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
 
 
+class ScanCandleModel(Base):
+    __tablename__ = "scan_daily_candles"
+
+    symbol: Mapped[str] = mapped_column(String(6), primary_key=True)
+    trade_date: Mapped[date] = mapped_column(Date(), primary_key=True)
+    open: Mapped[float] = mapped_column(Float(), nullable=False)
+    high: Mapped[float] = mapped_column(Float(), nullable=False)
+    low: Mapped[float] = mapped_column(Float(), nullable=False)
+    close: Mapped[float] = mapped_column(Float(), nullable=False)
+    volume: Mapped[float] = mapped_column(Float(), nullable=False)
+    amount: Mapped[float | None] = mapped_column(Float(), nullable=True)
+    adjustment: Mapped[str] = mapped_column(String(8), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+
+
 class ScanRunModel(Base):
     __tablename__ = "scan_runs"
 
@@ -240,6 +255,54 @@ class CandleRepository:
             select(DailyCandleModel.fetched_at)
             .where(DailyCandleModel.symbol == symbol)
             .order_by(DailyCandleModel.fetched_at.desc())
+            .limit(1)
+        )
+        value = self._session.scalar(statement)
+        return _as_aware_utc(value) if value is not None else None
+
+
+class ScanCandleRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def replace_symbol(self, symbol: str, candles: Iterable[CandleRecord]) -> None:
+        replacement = list(candles)
+        if any(candle.symbol != symbol for candle in replacement):
+            raise ValueError("all candles must belong to the replaced symbol")
+        if any(candle.adjustment != "qfq" for candle in replacement):
+            raise ValueError("only forward-adjusted daily candles are supported")
+        self._session.execute(
+            delete(ScanCandleModel).where(ScanCandleModel.symbol == symbol)
+        )
+        self._session.add_all(
+            ScanCandleModel(
+                symbol=candle.symbol,
+                trade_date=candle.trade_date,
+                open=candle.open,
+                high=candle.high,
+                low=candle.low,
+                close=candle.close,
+                volume=candle.volume,
+                amount=candle.amount,
+                adjustment=candle.adjustment,
+                fetched_at=_as_naive_utc(candle.fetched_at),
+            )
+            for candle in replacement
+        )
+
+    def list_symbol(self, symbol: str) -> list[CandleRecord]:
+        statement = (
+            select(ScanCandleModel)
+            .where(ScanCandleModel.symbol == symbol)
+            .order_by(ScanCandleModel.trade_date)
+        )
+        return [_scan_candle_record(row) for row in self._session.scalars(statement)]
+
+    def latest_fetched_at(self, symbol: str) -> datetime | None:
+        statement = (
+            select(ScanCandleModel.fetched_at)
+            .where(ScanCandleModel.symbol == symbol)
+            .order_by(ScanCandleModel.fetched_at.desc())
             .limit(1)
         )
         value = self._session.scalar(statement)
@@ -484,6 +547,21 @@ def _stock_record(row: StockModel) -> StockRecord:
 
 
 def _candle_record(row: DailyCandleModel) -> CandleRecord:
+    return CandleRecord(
+        row.symbol,
+        row.trade_date,
+        row.open,
+        row.high,
+        row.low,
+        row.close,
+        row.volume,
+        row.amount,
+        row.adjustment,
+        _as_aware_utc(row.fetched_at),
+    )
+
+
+def _scan_candle_record(row: ScanCandleModel) -> CandleRecord:
     return CandleRecord(
         row.symbol,
         row.trade_date,
