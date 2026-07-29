@@ -601,3 +601,28 @@ def test_scan_status_contract_is_persistence_compatible_and_date_safe() -> None:
     assert payload["marketDate"] == "2026-07-30"
     assert payload["errors"][0]["code"] == "DATA_UNAVAILABLE"
     assert "NaN" not in json.dumps(payload, ensure_ascii=False, allow_nan=False)
+
+
+def test_scan_routes_accept_work_and_expose_status_and_latest() -> None:
+    client = _client()
+
+    accepted = client.post(
+        "/api/v1/scans",
+        json={"symbols": ["000001"], "indicatorConfig": {}, "scoreWeights": {}},
+    )
+
+    assert accepted.status_code == 202
+    scan_id = accepted.json()["scanId"]
+    status_response = client.get(f"/api/v1/scans/{scan_id}")
+    latest = client.get("/api/v1/scans/latest")
+    assert status_response.status_code == 200
+    assert status_response.json()["scanId"] == scan_id
+    assert latest.status_code == 200
+    assert latest.json()["scanId"] == scan_id
+
+
+def test_unknown_scan_uses_uniform_not_found_error() -> None:
+    response = _client().get("/api/v1/scans/not-a-scan")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "SCAN_NOT_FOUND"

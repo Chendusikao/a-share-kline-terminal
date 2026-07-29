@@ -1,9 +1,10 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import {
   type ChangeEvent,
   type FormEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -15,9 +16,17 @@ import {
   useParams,
 } from "react-router-dom";
 
-import { getAnalysis, getMarketStatus, searchStocks } from "./api";
+import {
+  getAnalysis,
+  getLatestScan,
+  getMarketStatus,
+  getScan,
+  searchStocks,
+  startScan,
+} from "./api";
 import { KlineChart } from "./KlineChart";
 import { normalizeWeights, parseMaPeriods } from "./config";
+import { shouldAutoStartScan, sortScanRows } from "./scan";
 import {
   addRecentSymbol,
   addWatchlistSymbol,
@@ -33,6 +42,7 @@ import type {
   ComponentName,
   IndicatorConfig,
   ScoreWeights,
+  ScanStatus,
 } from "./types";
 
 const RANGE_OPTIONS: Array<{ value: AnalysisRange; label: string }> = [
@@ -99,6 +109,8 @@ function Header() {
 
 function ScanHome() {
   const [query, setQuery] = useState("");
+  const [scanId, setScanId] = useState<string | null>(null);
+  const autoAttempted = useRef(false);
   const market = useQuery({
     queryKey: ["market-status"],
     queryFn: getMarketStatus,
@@ -109,6 +121,69 @@ function ScanHome() {
     enabled: query.trim().length > 0,
   });
   const preferences = loadPreferences();
+  const latest = useQuery({
+    queryKey: ["scan-latest"],
+    queryFn: getLatestScan,
+    retry: false,
+  });
+  const scan = useQuery({
+    queryKey: ["scan-status", scanId],
+    queryFn: () => getScan(scanId ?? ""),
+    enabled: scanId !== null,
+    refetchInterval: (query) => {
+      const value = query.state.data;
+      return value?.status === "pending" || value?.status === "running"
+        ? 1000
+        : false;
+    },
+  });
+  const starter = useMutation({
+    mutationFn: (input: { symbols: string[]; forceRefresh: boolean }) =>
+      startScan({
+        ...input,
+        indicatorConfig: preferences.indicatorConfig,
+        scoreWeights: preferences.scoreWeights,
+      }),
+    onSuccess: ({ scanId: acceptedId }) => setScanId(acceptedId),
+  });
+  const shownScan = scan.data ?? latest.data;
+  const isActive =
+    shownScan?.status === "pending" || shownScan?.status === "running";
+  const rows = sortScanRows(shownScan?.results ?? []);
+
+  useEffect(() => {
+    if (
+      autoAttempted.current ||
+      market.data === undefined ||
+      !latest.isFetched
+    ) {
+      return;
+    }
+    if (
+      latest.data?.status === "pending" ||
+      latest.data?.status === "running"
+    ) {
+      autoAttempted.current = true;
+      setScanId(latest.data.scanId);
+      return;
+    }
+    if (
+      preferences.watchlist.length > 0 &&
+      shouldAutoStartScan(market.data, latest.data ?? null)
+    ) {
+      autoAttempted.current = true;
+      starter.mutate({
+        symbols: preferences.watchlist,
+        forceRefresh: false,
+      });
+    }
+  }, [
+    latest.data,
+    latest.isFetched,
+    market.data,
+    preferences.watchlist,
+    starter,
+  ]);
 
   return (
     <section className="page-stack">
@@ -154,8 +229,22 @@ function ScanHome() {
         </div>
         <div className="toolbar-actions">
           <span>{preferences.watchlist.length} / 20 只自选</span>
-          <button className="primary-button" disabled type="button">
-            运行扫描
+          <button
+            className="primary-button"
+            disabled={
+              preferences.watchlist.length === 0 ||
+              starter.isPending ||
+              isActive
+            }
+            type="button"
+            onClick={() =>
+              starter.mutate({
+                symbols: preferences.watchlist,
+                forceRefresh: true,
+              })
+            }
+          >
+            {starter.isPending ? "正在创建…" : "运行扫描"}
           </button>
         </div>
       </div>
@@ -166,7 +255,15 @@ function ScanHome() {
             <h2>批量扫描结果</h2>
             <p>默认按总分由高到低排列</p>
           </div>
-          <span className="boundary-badge">扫描服务将在 Task 6 接入</span>
+          {shownScan ? (
+            <span className="boundary-badge" aria-live="polite">
+              {`${shownScan.completedCount}/${shownScan.totalCount} ${
+                isActive ? "扫描中" : "已完成"
+              }`}
+            </span>
+          ) : (
+            <span className="boundary-badge">等待扫描</span>
+          )}
         </header>
         <div className="table-scroll">
           <table>
@@ -182,17 +279,63 @@ function ScanHome() {
               </tr>
             </thead>
             <tbody>
-              <tr className="empty-row">
-                <td colSpan={7}>
-                  <span className="empty-glyph">⌁</span>
-                  <strong>暂无扫描结果</strong>
-                  <small>
-                    {preferences.watchlist.length === 0
-                      ? "先搜索股票并加入自选"
-                      : "Task 6 接入后可从这里发起批量扫描"}
-                  </small>
-                </td>
-              </tr>
+              {rows.map((row) => (
+                <tr key={row.symbol}>
+                  <td>
+                    <Link to={`/stocks/${row.symbol}`}>{row.symbol}</Link>
+                  </td>
+                  <td>
+                    <strong>{row.score ?? "—"}</strong>
+                  </td>
+                  <td>{row.grade ?? "—"}</td>
+                  <td>{formatScoreChange(row.scoreChange)}</td>
+                  <td>{row.insights?.[0]?.summary ?? "暂无关键信号"}</td>
+                  <td>{shownScan?.marketDate ?? "—"}</td>
+                  <td>{cacheStatusLabel(row.dataStatus)}</td>
+                </tr>
+              ))}
+              {shownScan?.errors.map((error) => (
+                <tr className="scan-error-row" key={error.symbol}>
+                  <td>{error.symbol}</td>
+                  <td>—</td>
+                  <td>失败</td>
+                  <td>—</td>
+                  <td>
+                    <span>{error.message}</span>
+                    <button
+                      className="row-retry"
+                      type="button"
+                      aria-label={`重试 ${error.symbol}`}
+                      disabled={starter.isPending}
+                      onClick={() =>
+                        starter.mutate({
+                          symbols: [error.symbol],
+                          forceRefresh: true,
+                        })
+                      }
+                    >
+                      重试
+                    </button>
+                  </td>
+                  <td>{shownScan.marketDate ?? "—"}</td>
+                  <td>{error.code}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (shownScan?.errors.length ?? 0) === 0 && (
+                <tr className="empty-row">
+                  <td colSpan={7}>
+                    <span className="empty-glyph">⌁</span>
+                    <strong>{isActive ? "扫描进行中" : "暂无扫描结果"}</strong>
+                    <small>
+                      {preferences.watchlist.length === 0
+                        ? "先搜索股票并加入自选"
+                        : isActive
+                          ? "结果会每秒自动更新"
+                          : "点击“运行扫描”刷新自选股"}
+                    </small>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -210,6 +353,22 @@ function ScanHome() {
       )}
     </section>
   );
+}
+
+function formatScoreChange(value: number | null): string {
+  if (value === null) return "—";
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function cacheStatusLabel(
+  status: ScanStatus["results"][number]["dataStatus"],
+): string {
+  return {
+    network: "网络更新",
+    cache: "缓存命中",
+    stale: "旧缓存",
+    error: "失败",
+  }[status];
 }
 
 function StockDetail() {

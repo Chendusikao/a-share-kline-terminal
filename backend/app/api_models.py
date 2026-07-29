@@ -203,6 +203,7 @@ class ScanResult(ApiModel):
     insights: list[InsightResponse] | None = None
     data_status: Literal["network", "cache", "stale", "error"]
     error_code: ErrorCode | None = None
+    score_change: float | None = None
 
 
 class ScanError(ApiModel):

@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../src/App";
-import { STORAGE_KEY } from "../src/storage";
+import { defaultPreferences, STORAGE_KEY } from "../src/storage";
 import type { AnalysisResponse } from "../src/types";
 
 const analysis: AnalysisResponse = {
@@ -122,6 +122,20 @@ describe("App routes", () => {
             }),
           );
         }
+        if (url.endsWith("/api/v1/scans/latest")) {
+          return Promise.resolve(
+            response(
+              {
+                error: {
+                  code: "SCAN_NOT_FOUND",
+                  message: "未找到扫描任务。",
+                  retryable: false,
+                },
+              },
+              404,
+            ),
+          );
+        }
         if (url.includes("/analysis")) {
           return Promise.resolve(response(analysis));
         }
@@ -152,8 +166,130 @@ describe("App routes", () => {
     expect(screen.getByText("关键信号")).toBeInTheDocument();
     expect(screen.getByText("行情日期")).toBeInTheDocument();
     expect(screen.getByText("缓存状态")).toBeInTheDocument();
-    expect(screen.getByText("扫描服务将在 Task 6 接入")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "运行扫描" })).toBeDisabled();
     expect(await screen.findByText("2026-07-29")).toBeInTheDocument();
+  });
+
+  it("runs a watchlist scan, renders progress and failures, and retries one row", () => {
+    const preferences = defaultPreferences();
+    preferences.watchlist = ["000001", "600000"];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.includes("/market/status")) {
+        return Promise.resolve(
+          response({
+            marketDate: "2026-07-30",
+            status: "closed",
+            isOpen: false,
+            isTradingDay: true,
+          }),
+        );
+      }
+      if (url.endsWith("/api/v1/scans/latest")) {
+        return Promise.resolve(
+          response(
+            {
+              error: {
+                code: "SCAN_NOT_FOUND",
+                message: "未找到扫描任务。",
+                retryable: false,
+              },
+            },
+            404,
+          ),
+        );
+      }
+      if (url.endsWith("/api/v1/scans") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return Promise.resolve(
+          response({
+            scanId: body.symbols.length === 1 ? "retry-1" : "scan-1",
+          }),
+        );
+      }
+      if (url.endsWith("/api/v1/scans/scan-1")) {
+        return Promise.resolve(
+          response({
+            scanId: "scan-1",
+            status: "completed",
+            completedCount: 2,
+            totalCount: 2,
+            marketDate: "2026-07-30",
+            results: [
+              {
+                symbol: "000001",
+                score: 72,
+                grade: "强",
+                breakdown: {},
+                insights: [
+                  {
+                    category: "trend",
+                    direction: "偏多",
+                    summary: "均线结构偏强",
+                    severity: "中",
+                    evidence: [],
+                  },
+                ],
+                dataStatus: "network",
+                errorCode: null,
+                scoreChange: 5,
+              },
+            ],
+            errors: [
+              {
+                symbol: "600000",
+                code: "DATA_UNAVAILABLE",
+                message: "行情数据暂时不可用，已重试两次。",
+              },
+            ],
+          }),
+        );
+      }
+      if (url.endsWith("/api/v1/scans/retry-1")) {
+        return Promise.resolve(
+          response({
+            scanId: "retry-1",
+            status: "running",
+            completedCount: 0,
+            totalCount: 1,
+            marketDate: "2026-07-30",
+            results: [],
+            errors: [],
+          }),
+        );
+      }
+      return Promise.resolve(
+        response({ stocks: [], updatedAt: "", stale: false }),
+      );
+    });
+
+    renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "运行扫描" }));
+
+    return screen.findByText("均线结构偏强").then(async () => {
+      expect(screen.getByText(/2\/2/)).toBeInTheDocument();
+      expect(screen.getByText("+5")).toBeInTheDocument();
+      expect(
+        screen.getByText("行情数据暂时不可用，已重试两次。"),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "重试 600000" }));
+      await waitFor(() => {
+        const posts = vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([url, init]) =>
+              String(url).endsWith("/api/v1/scans") && init?.method === "POST",
+          )
+          .map(([, init]) => JSON.parse(String(init?.body)));
+        expect(posts).toContainEqual(
+          expect.objectContaining({
+            symbols: ["600000"],
+            forceRefresh: true,
+          }),
+        );
+      });
+    });
   });
 
   it("loads a stock analysis, shows score evidence, and persists watchlist", async () => {

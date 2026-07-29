@@ -108,3 +108,30 @@ export interface AnalysisResponse {
   cache: { status: CacheStatus; updatedAt: string };
   warnings: Array<{ code: string; message: string }>;
 }
+
+export interface ScanResult {
+  symbol: string;
+  score: number | null;
+  grade: "弱" | "偏弱" | "中性" | "偏强" | "强" | null;
+  breakdown: ComponentMap<ComponentScore> | null;
+  insights: Insight[] | null;
+  dataStatus: CacheStatus | "error";
+  errorCode: string | null;
+  scoreChange: number | null;
+}
+
+export interface ScanError {
+  symbol: string;
+  code: string;
+  message: string;
+}
+
+export interface ScanStatus {
+  scanId: string;
+  status: "pending" | "running" | "completed" | "failed";
+  completedCount: number;
+  totalCount: number;
+  marketDate: string | null;
+  results: ScanResult[];
+  errors: ScanError[];
+}

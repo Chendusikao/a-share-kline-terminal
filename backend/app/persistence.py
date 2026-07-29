@@ -16,6 +16,7 @@ from sqlalchemy import (
     delete,
     or_,
     select,
+    update,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import (
@@ -113,6 +114,28 @@ class CandleRecord:
     amount: float | None
     adjustment: str
     fetched_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ScanRunRecord:
+    id: str
+    market_date: date | None
+    config_hash: str
+    status: str
+    created_at: datetime
+    completed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ScanResultRecord:
+    run_id: str
+    symbol: str
+    score: float | None
+    grade: str | None
+    breakdown_json: dict[str, object] | None
+    insights_json: list[dict[str, object]] | None
+    data_status: str
+    error_code: str | None
 
 
 class Database:
@@ -223,6 +246,222 @@ class CandleRepository:
         return _as_aware_utc(value) if value is not None else None
 
 
+class ScanRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create_run(
+        self,
+        *,
+        scan_id: str,
+        market_date: date | None,
+        config_hash: str,
+        symbols: Iterable[str],
+        created_at: datetime,
+    ) -> None:
+        self._session.add(
+            ScanRunModel(
+                id=scan_id,
+                market_date=market_date,
+                config_hash=config_hash,
+                status="pending",
+                created_at=_as_naive_utc(created_at),
+                completed_at=None,
+            )
+        )
+        self._session.add_all(
+            ScanResultModel(
+                run_id=scan_id,
+                symbol=symbol,
+                score=None,
+                grade=None,
+                breakdown_json=None,
+                insights_json=None,
+                data_status="pending",
+                error_code=None,
+            )
+            for symbol in symbols
+        )
+
+    def mark_running(self, scan_id: str) -> None:
+        self._session.execute(
+            update(ScanRunModel)
+            .where(ScanRunModel.id == scan_id)
+            .values(status="running")
+        )
+
+    def save_result(
+        self,
+        scan_id: str,
+        symbol: str,
+        *,
+        score: float | None,
+        grade: str | None,
+        breakdown_json: dict[str, object],
+        insights_json: list[dict[str, object]],
+        data_status: str,
+        error_code: str | None,
+    ) -> None:
+        self._session.execute(
+            update(ScanResultModel)
+            .where(
+                ScanResultModel.run_id == scan_id,
+                ScanResultModel.symbol == symbol,
+            )
+            .values(
+                score=score,
+                grade=grade,
+                breakdown_json=breakdown_json,
+                insights_json=insights_json,
+                data_status=data_status,
+                error_code=error_code,
+            )
+        )
+
+    def save_error(
+        self,
+        scan_id: str,
+        symbol: str,
+        error_code: str,
+        *,
+        message: str,
+    ) -> None:
+        self._session.execute(
+            update(ScanResultModel)
+            .where(
+                ScanResultModel.run_id == scan_id,
+                ScanResultModel.symbol == symbol,
+            )
+            .values(
+                data_status="error",
+                error_code=error_code,
+                breakdown_json={"errorMessage": message},
+            )
+        )
+
+    def finish_run(self, scan_id: str, *, completed_at: datetime) -> None:
+        self._session.execute(
+            update(ScanRunModel)
+            .where(ScanRunModel.id == scan_id)
+            .values(
+                status="completed",
+                completed_at=_as_naive_utc(completed_at),
+            )
+        )
+
+    def recover_incomplete(self, *, completed_at: datetime) -> int:
+        incomplete = list(
+            self._session.scalars(
+                select(ScanRunModel.id).where(
+                    ScanRunModel.status.in_(("pending", "running"))
+                )
+            )
+        )
+        if not incomplete:
+            return 0
+        self._session.execute(
+            update(ScanRunModel)
+            .where(ScanRunModel.id.in_(incomplete))
+            .values(
+                status="failed",
+                completed_at=_as_naive_utc(completed_at),
+            )
+        )
+        self._session.execute(
+            update(ScanResultModel)
+            .where(
+                ScanResultModel.run_id.in_(incomplete),
+                ScanResultModel.data_status == "pending",
+            )
+            .values(data_status="error", error_code="DATA_UNAVAILABLE")
+        )
+        return len(incomplete)
+
+    def retain_latest(self, limit: int) -> None:
+        if limit < 1:
+            raise ValueError("scan retention limit must be positive")
+        retained = select(ScanRunModel.id).order_by(
+            ScanRunModel.created_at.desc(),
+            ScanRunModel.id.desc(),
+        ).limit(limit)
+        obsolete = list(
+            self._session.scalars(
+                select(ScanRunModel.id).where(ScanRunModel.id.not_in(retained))
+            )
+        )
+        if not obsolete:
+            return
+        self._session.execute(
+            delete(ScanResultModel).where(ScanResultModel.run_id.in_(obsolete))
+        )
+        self._session.execute(
+            delete(ScanRunModel).where(ScanRunModel.id.in_(obsolete))
+        )
+
+    def get_run(self, scan_id: str) -> ScanRunRecord | None:
+        row = self._session.get(ScanRunModel, scan_id)
+        return _scan_run_record(row) if row is not None else None
+
+    def latest_run(self) -> ScanRunRecord | None:
+        row = self._session.scalar(
+            select(ScanRunModel).order_by(
+                ScanRunModel.created_at.desc(),
+                ScanRunModel.id.desc(),
+            )
+        )
+        return _scan_run_record(row) if row is not None else None
+
+    def list_runs(self) -> list[ScanRunRecord]:
+        rows = self._session.scalars(
+            select(ScanRunModel).order_by(ScanRunModel.created_at)
+        )
+        return [_scan_run_record(row) for row in rows]
+
+    def results_for(self, scan_id: str) -> list[ScanResultRecord]:
+        rows = self._session.scalars(
+            select(ScanResultModel)
+            .where(ScanResultModel.run_id == scan_id)
+            .order_by(ScanResultModel.symbol)
+        )
+        return [_scan_result_record(row) for row in rows]
+
+    def find_duplicate(
+        self,
+        *,
+        market_date: date | None,
+        config_hash: str,
+    ) -> ScanRunRecord | None:
+        row = self._session.scalar(
+            select(ScanRunModel)
+            .where(
+                ScanRunModel.market_date == market_date,
+                ScanRunModel.config_hash == config_hash,
+                ScanRunModel.status.in_(("pending", "running", "completed")),
+            )
+            .order_by(ScanRunModel.created_at.desc())
+        )
+        return _scan_run_record(row) if row is not None else None
+
+    def previous_score(
+        self,
+        *,
+        before_run: ScanRunRecord,
+        symbol: str,
+    ) -> float | None:
+        return self._session.scalar(
+            select(ScanResultModel.score)
+            .join(ScanRunModel, ScanRunModel.id == ScanResultModel.run_id)
+            .where(
+                ScanRunModel.created_at < _as_naive_utc(before_run.created_at),
+                ScanRunModel.status == "completed",
+                ScanResultModel.symbol == symbol,
+                ScanResultModel.score.is_not(None),
+            )
+            .order_by(ScanRunModel.created_at.desc())
+            .limit(1)
+        )
+
+
 def _as_naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
@@ -256,4 +495,30 @@ def _candle_record(row: DailyCandleModel) -> CandleRecord:
         row.amount,
         row.adjustment,
         _as_aware_utc(row.fetched_at),
+    )
+
+
+def _scan_run_record(row: ScanRunModel) -> ScanRunRecord:
+    return ScanRunRecord(
+        id=row.id,
+        market_date=row.market_date,
+        config_hash=row.config_hash,
+        status=row.status,
+        created_at=_as_aware_utc(row.created_at),
+        completed_at=(
+            _as_aware_utc(row.completed_at) if row.completed_at is not None else None
+        ),
+    )
+
+
+def _scan_result_record(row: ScanResultModel) -> ScanResultRecord:
+    return ScanResultRecord(
+        run_id=row.run_id,
+        symbol=row.symbol,
+        score=row.score,
+        grade=row.grade,
+        breakdown_json=row.breakdown_json,
+        insights_json=row.insights_json,
+        data_status=row.data_status,
+        error_code=row.error_code,
     )

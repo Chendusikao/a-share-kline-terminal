@@ -3,6 +3,7 @@ import type {
   AnalysisResponse,
   IndicatorConfig,
   ScoreWeights,
+  ScanStatus,
   Stock,
 } from "./types";
 
@@ -64,4 +65,25 @@ export function getAnalysis(input: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export function startScan(input: {
+  symbols: string[];
+  indicatorConfig: IndicatorConfig;
+  scoreWeights: ScoreWeights;
+  forceRefresh: boolean;
+}): Promise<{ scanId: string }> {
+  return requestJson("/api/v1/scans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function getScan(scanId: string): Promise<ScanStatus> {
+  return requestJson(`/api/v1/scans/${encodeURIComponent(scanId)}`);
+}
+
+export function getLatestScan(): Promise<ScanStatus> {
+  return requestJson("/api/v1/scans/latest");
 }

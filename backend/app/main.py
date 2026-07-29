@@ -30,6 +30,9 @@ from app.api_models import (
     IndicatorsResponse,
     InsightResponse,
     MarketStatusResponse,
+    ScanAcceptedResponse,
+    ScanRequest,
+    ScanStatusResponse,
     ScoreResponse,
     StockResponse,
     StockSearchResponse,
@@ -50,6 +53,7 @@ from app.market_service import (
     StockSearchResult,
 )
 from app.persistence import CandleRecord, Database, StockRecord
+from app.scan_service import ScanService
 from app.scoring import (
     Evidence,
     TechnicalAnalysis,
@@ -98,6 +102,11 @@ def create_app(
     clock = now_provider or (lambda: datetime.now(UTC))
     stock_catalog = StockCatalogService(configured_database, gateway)
     candle_service = CandleService(configured_database, gateway)
+    scan_service = ScanService(
+        configured_database,
+        candle_service,
+        now_provider=lambda: _shanghai_now(clock()),
+    )
     application = FastAPI(
         title="A 股 K 线终端",
         docs_url=None,
@@ -235,6 +244,42 @@ def create_app(
             indicators=indicators,
             analysis=score,
         )
+
+    @application.post(
+        "/api/v1/scans",
+        response_model=ScanAcceptedResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def start_scan(request: ScanRequest) -> ScanAcceptedResponse:
+        local_now = _shanghai_now(clock())
+        market = _market_status(local_now, exchange_calendar)
+        scan_id = scan_service.start(
+            request,
+            market_date=market.market_date or local_now.date(),
+        )
+        return ScanAcceptedResponse(scan_id=scan_id)
+
+    @application.get(
+        "/api/v1/scans/latest",
+        response_model=ScanStatusResponse,
+    )
+    def latest_scan() -> ScanStatusResponse:
+        latest = scan_service.latest_status()
+        if latest is None:
+            raise _scan_not_found()
+        return latest
+
+    @application.get(
+        "/api/v1/scans/{scan_id}",
+        response_model=ScanStatusResponse,
+    )
+    def scan_status(scan_id: str) -> ScanStatusResponse:
+        result = scan_service.get_status(scan_id)
+        if result is None:
+            raise _scan_not_found()
+        return result
+
+    application.router.add_event_handler("shutdown", scan_service.shutdown)
 
     frontend_dist = static_dir or Path(__file__).parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():
@@ -492,6 +537,15 @@ def _error_response(
     return JSONResponse(
         status_code=status_code,
         content=response.model_dump(mode="json", by_alias=True),
+    )
+
+
+def _scan_not_found() -> ApiProblem:
+    return ApiProblem(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code="SCAN_NOT_FOUND",
+        message="未找到扫描任务。",
+        retryable=False,
     )
 
 

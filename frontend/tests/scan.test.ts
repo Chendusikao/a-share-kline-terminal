@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sortScanRows } from "../src/scan";
+import { shouldAutoStartScan, sortScanRows } from "../src/scan";
 
 describe("scan result ordering", () => {
   it("sorts available scores descending and keeps unavailable rows last", () => {
@@ -15,5 +15,82 @@ describe("scan result ordering", () => {
       "000001",
       "600000",
     ]);
+  });
+});
+
+describe("automatic scan eligibility", () => {
+  it("starts only after 16:00 when the market date is newer than the last completed scan", () => {
+    const eligible = shouldAutoStartScan(
+      {
+        marketDate: "2026-07-30",
+        status: "closed",
+        isOpen: false,
+        isTradingDay: true,
+      },
+      {
+        scanId: "scan-old",
+        status: "completed",
+        completedCount: 1,
+        totalCount: 1,
+        marketDate: "2026-07-29",
+        results: [],
+        errors: [],
+      },
+      new Date("2026-07-30T08:01:00.000Z"),
+    );
+    const tooEarly = shouldAutoStartScan(
+      {
+        marketDate: "2026-07-30",
+        status: "closed",
+        isOpen: false,
+        isTradingDay: true,
+      },
+      null,
+      new Date("2026-07-30T07:59:00.000Z"),
+    );
+
+    expect(eligible).toBe(true);
+    expect(tooEarly).toBe(false);
+  });
+
+  it("does not duplicate a completed or active scan for the same market date", () => {
+    const market = {
+      marketDate: "2026-07-30",
+      status: "closed" as const,
+      isOpen: false,
+      isTradingDay: true,
+    };
+    const now = new Date("2026-07-30T09:00:00.000Z");
+
+    expect(
+      shouldAutoStartScan(
+        market,
+        {
+          scanId: "same-day",
+          status: "completed",
+          completedCount: 1,
+          totalCount: 1,
+          marketDate: "2026-07-30",
+          results: [],
+          errors: [],
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      shouldAutoStartScan(
+        market,
+        {
+          scanId: "active",
+          status: "running",
+          completedCount: 0,
+          totalCount: 1,
+          marketDate: "2026-07-30",
+          results: [],
+          errors: [],
+        },
+        now,
+      ),
+    ).toBe(false);
   });
 });
