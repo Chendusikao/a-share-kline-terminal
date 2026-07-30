@@ -10,8 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from starlette import status
 
 from app.api_models import (
@@ -293,11 +292,19 @@ def create_app(
 
     frontend_dist = static_dir or Path(__file__).parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():
-        application.mount(
-            "/",
-            StaticFiles(directory=frontend_dist, html=True),
-            name="frontend",
-        )
+        static_root = frontend_dist.resolve()
+        index_file = static_root / "index.html"
+
+        @application.get("/{client_path:path}", include_in_schema=False)
+        def frontend(client_path: str) -> FileResponse:
+            requested_file = (static_root / client_path).resolve()
+            if (
+                client_path
+                and requested_file.is_relative_to(static_root)
+                and requested_file.is_file()
+            ):
+                return FileResponse(requested_file)
+            return FileResponse(index_file)
 
     return application
 
