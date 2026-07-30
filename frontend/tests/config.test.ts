@@ -46,6 +46,21 @@ describe("settings helpers", () => {
     );
   });
 
+  it("keeps rounded effective weights non-negative when their display total is 100.00", () => {
+    const rounded = normalizeWeights({
+      trend: 100051,
+      momentum: 200051,
+      volumePrice: 300051,
+      position: 399837,
+      risk: 10,
+    });
+
+    expect(Object.values(rounded).every((value) => value >= 0)).toBe(true);
+    expect(Object.values(rounded).reduce((sum, value) => sum + value, 0)).toBe(
+      100,
+    );
+  });
+
   it("rejects all-zero weights and invalid MA periods", () => {
     expect(() =>
       normalizeWeights({

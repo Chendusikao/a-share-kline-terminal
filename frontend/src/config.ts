@@ -12,14 +12,23 @@ export function normalizeWeights(weights: ScoreWeights): ScoreWeights {
   if (values.some((value) => !Number.isFinite(value) || value < 0)) {
     throw new Error("评分权重必须是非负数");
   }
-  const total = values.reduce((sum, value) => sum + value, 0);
-  if (total === 0) {
+  const largestWeight = Math.max(...values);
+  if (largestWeight === 0) {
     throw new Error("至少一项权重必须大于 0");
   }
+  const total = values.reduce(
+    (sum, value) => sum + value / largestWeight,
+    0,
+  );
   const normalized = Object.fromEntries(
-    keys.map((key) => [key, Number(((weights[key] / total) * 100).toFixed(2))]),
+    keys.map((key) => [
+      key,
+      Number(((weights[key] / largestWeight / total) * 100).toFixed(2)),
+    ]),
   ) as unknown as ScoreWeights;
-  const lastPositive = [...keys].reverse().find((key) => weights[key] > 0);
+  const lastPositive: (typeof keys)[number] | undefined = keys.reduce(
+    (largest, key) => (weights[key] > weights[largest] ? key : largest),
+  );
   if (lastPositive === undefined) {
     throw new Error("至少一项权重必须大于 0");
   }
