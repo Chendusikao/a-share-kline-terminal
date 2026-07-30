@@ -16,10 +16,7 @@ export function normalizeWeights(weights: ScoreWeights): ScoreWeights {
   if (largestWeight === 0) {
     throw new Error("至少一项权重必须大于 0");
   }
-  const total = values.reduce(
-    (sum, value) => sum + value / largestWeight,
-    0,
-  );
+  const total = values.reduce((sum, value) => sum + value / largestWeight, 0);
   const normalized = Object.fromEntries(
     keys.map((key) => [
       key,
