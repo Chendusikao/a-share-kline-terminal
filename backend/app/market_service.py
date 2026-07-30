@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Protocol
+from typing import Protocol, cast
 
 import pandas as pd
 
@@ -124,7 +124,13 @@ class CandleService:
             )
 
         try:
-            frame = self._gateway.fetch_daily_candles(symbol)
+            end_date = now.date()
+            start_date = _range_start_date(end_date, range_name)
+            frame = self._gateway.fetch_daily_candles(
+                symbol,
+                start_date=start_date,
+                end_date=end_date if start_date is not None else None,
+            )
             replacement = _candle_records(frame, symbol, current_time)
             if not replacement:
                 raise DataUnavailableError("AKShare returned no valid candle data")
@@ -393,16 +399,23 @@ def _slice_candle_data(data: CandleData, range_name: str) -> CandleData:
     if range_name == "all" or not data.candles:
         return data
     latest = pd.Timestamp(data.candles[-1].trade_date)
-    offsets = {
-        "3m": pd.DateOffset(months=3),
-        "6m": pd.DateOffset(months=6),
-        "1y": pd.DateOffset(years=1),
-        "3y": pd.DateOffset(years=3),
-    }
-    cutoff = (latest - offsets[range_name]).date()
+    cutoff = _range_start_date(latest.date(), range_name)
+    assert cutoff is not None
     return CandleData(
         [candle for candle in data.candles if candle.trade_date >= cutoff],
         data.updated_at,
         data.from_cache,
         data.stale,
     )
+
+
+def _range_start_date(end_date: date, range_name: str) -> date | None:
+    if range_name == "all":
+        return None
+    offsets = {
+        "3m": pd.DateOffset(months=3),
+        "6m": pd.DateOffset(months=6),
+        "1y": pd.DateOffset(years=1),
+        "3y": pd.DateOffset(years=3),
+    }
+    return cast(date, (pd.Timestamp(end_date) - offsets[range_name]).date())

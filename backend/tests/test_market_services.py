@@ -283,6 +283,40 @@ def test_candle_ranges_use_latest_market_date_and_default_to_three_years() -> No
         service.get("000001", now=now, range_name="2y")
 
 
+def test_default_three_year_range_requests_a_bounded_gateway_window() -> None:
+    from app.market_service import CandleService
+
+    class WindowGateway(CandleGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.windows: list[tuple[date | None, date | None]] = []
+
+        def fetch_daily_candles(
+            self,
+            symbol: str,
+            *,
+            start_date: date | None = None,
+            end_date: date | None = None,
+        ) -> pd.DataFrame:
+            self.windows.append((start_date, end_date))
+            return super().fetch_daily_candles(
+                symbol,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+    database = Database("sqlite+pysqlite:///:memory:")
+    database.create_schema()
+    gateway = WindowGateway()
+
+    CandleService(database, gateway).get(
+        "000001",
+        now=datetime(2026, 7, 29, 16, tzinfo=UTC),
+    )
+
+    assert gateway.windows == [(date(2023, 7, 29), date(2026, 7, 29))]
+
+
 def test_malformed_refresh_preserves_complete_stale_candle_cache() -> None:
     from app.market_service import CandleService
 
