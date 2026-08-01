@@ -2,6 +2,24 @@
 
 仅在 Windows 本机运行的 A 股前复权日线技术分析终端。当前版本已提供股票搜索、K 线与内置指标、透明技术评分、自选股批量扫描、SQLite 缓存和重启恢复。
 
+## 技术栈
+
+| 分层 | 技术 |
+| --- | --- |
+| 前端 | React 19、TypeScript 7、Vite 8、React Router、TanStack Query、Apache ECharts |
+| 后端 | Python 3.14、FastAPI、Pydantic、Uvicorn |
+| 行情与分析 | AKShare、pandas；内置 MA、MACD、RSI、KDJ、BOLL、ATR 与均量指标 |
+| 数据存储 | SQLite、SQLAlchemy |
+| 测试与质量 | pytest、Ruff、mypy、Vitest、Testing Library、Playwright |
+| 本地运行与 CI | PowerShell、GitHub Actions；默认仅监听 `127.0.0.1` |
+
+## 功能概览
+
+- A 股前复权日线、缓存降级与可见数据状态。
+- 可调指标、透明技术面评分与结构化证据，不生成买卖建议。
+- 自选股、批量扫描、失败重试、进度轮询与重启恢复。
+- 深色专业终端界面，遵循 A 股红涨绿跌惯例。
+
 ## 环境要求
 
 - Node.js 24
