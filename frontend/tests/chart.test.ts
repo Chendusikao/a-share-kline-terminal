@@ -199,6 +199,22 @@ describe("K-line option mapping", () => {
     }
   });
 
+  it("emphasizes the indicator selected by an evidence locator", () => {
+    analysis.indicators.series = {
+      ma20: { values: [1, 2], reasons: [null, null] },
+    };
+
+    const option = buildKlineOption(
+      analysis,
+      { overlays: ["ma20"], oscillator: "", focusIndicator: "ma20" },
+      DEFAULT_INDICATOR_CONFIG,
+    );
+    const ma = option.series.find((series) => series.name === "MA20");
+
+    expect(ma?.lineStyle?.width).toBe(2.8);
+    expect(ma?.z).toBe(4);
+  });
+
   it("keeps canonical RSI and ATR keys while labels follow configured periods", () => {
     const configured = structuredClone(DEFAULT_INDICATOR_CONFIG);
     configured.rsi.period = 21;
