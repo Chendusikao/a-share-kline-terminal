@@ -25,8 +25,21 @@ import {
   startScan,
 } from "./api";
 import { KlineChart } from "./KlineChart";
+import {
+  INDICATOR_GLOSSARY,
+  PRESET_DEFINITIONS,
+  applyPreset,
+  hasSeenOnboarding,
+  markOnboardingSeen,
+  type PresetId,
+} from "./beginner";
 import { normalizeWeights, parseMaPeriods } from "./config";
-import { indicatorLabel, indicatorPresentation } from "./indicator-contract";
+import {
+  indicatorLabel,
+  indicatorPresentation,
+  isIndicatorSeriesEnabled,
+  metricToIndicatorKey,
+} from "./indicator-contract";
 import { shouldAutoStartScan, sortScanRows } from "./scan";
 import {
   addRecentSymbol,
@@ -41,6 +54,7 @@ import type {
   AnalysisRange,
   AnalysisResponse,
   ComponentName,
+  Evidence,
   IndicatorConfig,
   ScoreWeights,
   ScanStatus,
@@ -111,6 +125,7 @@ function Header() {
 function ScanHome() {
   const [query, setQuery] = useState("");
   const [scanId, setScanId] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(() => !hasSeenOnboarding());
   const autoAttempted = useRef(false);
   const market = useQuery({
     queryKey: ["market-status"],
@@ -194,12 +209,21 @@ function ScanHome() {
           <h1>自选扫描</h1>
           <p>集中查看自选股的技术面状态与结构化信号。</p>
         </div>
-        <div className="market-state">
-          <span className={market.data?.isOpen ? "dot live" : "dot"} />
-          <span>
-            {market.data?.isOpen ? "交易中" : "已收盘"}
-            <small>{market.data?.marketDate ?? "市场日历不可用"}</small>
-          </span>
+        <div className="heading-actions">
+          <button
+            className="guide-trigger"
+            type="button"
+            onClick={() => setShowGuide(true)}
+          >
+            新手指南
+          </button>
+          <div className="market-state">
+            <span className={market.data?.isOpen ? "dot live" : "dot"} />
+            <span>
+              {market.data?.isOpen ? "交易中" : "已收盘"}
+              <small>{market.data?.marketDate ?? "市场日历不可用"}</small>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -352,6 +376,14 @@ function ScanHome() {
           ))}
         </section>
       )}
+      {showGuide && (
+        <BeginnerGuide
+          onClose={() => {
+            markOnboardingSeen();
+            setShowGuide(false);
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -381,6 +413,7 @@ function StockDetail() {
   const [oscillator, setOscillator] = useState(
     () => presentation.oscillators[0] ?? "",
   );
+  const [focusedIndicator, setFocusedIndicator] = useState<string | null>(null);
   const analysis = useQuery({
     queryKey: [
       "analysis",
@@ -431,6 +464,19 @@ function StockDetail() {
   const effectiveOscillator = availableOscillators.includes(oscillator)
     ? oscillator
     : (availableOscillators[0] ?? "");
+  const focusEvidence = (metric: string) => {
+    const key = metricToIndicatorKey(metric);
+    if (key === null) return;
+    if (availableOverlays.includes(key)) {
+      setOverlays((current) =>
+        current.includes(key) ? current : [...current, key],
+      );
+    }
+    if (availableOscillators.includes(key)) setOscillator(key);
+    if (key === "volumeMa20" && data.indicators.series[key] === undefined)
+      return;
+    setFocusedIndicator(key);
+  };
   const toggleWatchlist = () => {
     const next = inWatchlist
       ? removeWatchlistSymbol(preferences, data.stock.symbol)
@@ -519,6 +565,8 @@ function StockDetail() {
         </div>
       </div>
 
+      <IndicatorGlossary />
+
       <div className="analysis-layout">
         <section className="chart-panel">
           {data.candles.length === 0 ? (
@@ -529,22 +577,55 @@ function StockDetail() {
             <>
               <KlineChart
                 analysis={data}
-                selection={{ overlays, oscillator: effectiveOscillator }}
+                selection={{
+                  overlays,
+                  oscillator: effectiveOscillator,
+                  focusIndicator: focusedIndicator,
+                }}
                 indicatorConfig={preferences.indicatorConfig}
               />
               <p className="chart-hint">
                 滚轮缩放 · 拖动平移 · 悬停查看十字光标
+                {focusedIndicator !== null && (
+                  <button
+                    className="clear-focus"
+                    type="button"
+                    onClick={() => setFocusedIndicator(null)}
+                  >
+                    已定位到{" "}
+                    {indicatorLabel(
+                      focusedIndicator,
+                      preferences.indicatorConfig,
+                    )}{" "}
+                    · 清除定位
+                  </button>
+                )}
               </p>
             </>
           )}
         </section>
-        <AnalysisRail data={data} />
+        <AnalysisRail
+          data={data}
+          indicatorConfig={preferences.indicatorConfig}
+          availableIndicatorKeys={Object.keys(data.indicators.series)}
+          onFocusEvidence={focusEvidence}
+        />
       </div>
     </section>
   );
 }
 
-function AnalysisRail({ data }: { data: AnalysisResponse }) {
+function AnalysisRail({
+  data,
+  indicatorConfig,
+  availableIndicatorKeys,
+  onFocusEvidence,
+}: {
+  data: AnalysisResponse;
+  indicatorConfig: IndicatorConfig;
+  availableIndicatorKeys: string[];
+  onFocusEvidence: (metric: string) => void;
+}) {
   const positionEvidence = data.score.breakdown.position?.evidence ?? [];
   return (
     <aside className="analysis-rail" aria-label="技术面解读">
@@ -593,6 +674,12 @@ function AnalysisRail({ data }: { data: AnalysisResponse }) {
                   ? ""
                   : ` · 参考 ${evidence.reference}`}
               </small>
+              <EvidenceLocator
+                evidence={evidence}
+                indicatorConfig={indicatorConfig}
+                availableIndicatorKeys={availableIndicatorKeys}
+                onFocus={onFocusEvidence}
+              />
             </div>
           ))}
         </section>
@@ -616,9 +703,18 @@ function AnalysisRail({ data }: { data: AnalysisResponse }) {
             </div>
             <p>{insight.summary}</p>
             {insight.evidence.map((evidence) => (
-              <small key={`${evidence.metric}-${evidence.description}`}>
-                {evidence.description}
-              </small>
+              <div
+                className="insight-evidence"
+                key={`${evidence.metric}-${evidence.description}`}
+              >
+                <small>{evidence.description}</small>
+                <EvidenceLocator
+                  evidence={evidence}
+                  indicatorConfig={indicatorConfig}
+                  availableIndicatorKeys={availableIndicatorKeys}
+                  onFocus={onFocusEvidence}
+                />
+              </div>
             ))}
           </article>
         ))}
@@ -630,6 +726,100 @@ function AnalysisRail({ data }: { data: AnalysisResponse }) {
         </p>
       ))}
     </aside>
+  );
+}
+
+function EvidenceLocator({
+  evidence,
+  indicatorConfig,
+  availableIndicatorKeys,
+  onFocus,
+}: {
+  evidence: Evidence;
+  indicatorConfig: IndicatorConfig;
+  availableIndicatorKeys: string[];
+  onFocus: (metric: string) => void;
+}) {
+  const key = metricToIndicatorKey(evidence.metric);
+  if (
+    key === null ||
+    !availableIndicatorKeys.includes(key) ||
+    !isIndicatorSeriesEnabled(key, indicatorConfig)
+  ) {
+    return <span className="evidence-unavailable">图表未启用</span>;
+  }
+  return (
+    <button
+      className="evidence-locator"
+      type="button"
+      onClick={() => onFocus(evidence.metric)}
+      aria-label={`定位图表：${evidence.description}`}
+    >
+      定位图表 · {indicatorLabel(key, indicatorConfig)}
+    </button>
+  );
+}
+
+function IndicatorGlossary() {
+  return (
+    <details className="glossary-card">
+      <summary>指标小词典（新手先看这里）</summary>
+      <div className="glossary-grid">
+        {INDICATOR_GLOSSARY.map((entry) => (
+          <article key={entry.key}>
+            <strong>{entry.title}</strong>
+            <p>{entry.summary}</p>
+            <small>{entry.reading}</small>
+          </article>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function BeginnerGuide({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="beginner-overlay">
+      <section
+        className="beginner-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="beginner-guide-title"
+      >
+        <p className="eyebrow">QUICK START / 01</p>
+        <h2 id="beginner-guide-title">先用 3 步看懂一张 K 线图</h2>
+        <p className="beginner-lead">
+          这是本地技术分析工具，不需要先学会所有指标。按下面顺序看，先建立自己的观察习惯。
+        </p>
+        <ol className="beginner-steps">
+          <li>
+            <strong>先看价格和成交量</strong>
+            <span>价格决定方向，成交量帮助确认这次变化有没有参与度。</span>
+          </li>
+          <li>
+            <strong>再看一两个指标</strong>
+            <span>MA 看趋势，MACD/RSI 看动能；不要同时打开所有指标。</span>
+          </li>
+          <li>
+            <strong>最后读结构化解读</strong>
+            <span>
+              点击“定位图表”可以把对应指标加到图上，核对证据后再下结论。
+            </span>
+          </li>
+        </ol>
+        <p className="beginner-disclaimer">
+          指标只反映历史数据，不能预测未来，也不构成投资建议。
+        </p>
+        <div className="beginner-actions">
+          <button className="ghost-button" type="button" onClick={onClose}>
+            稍后再看
+          </button>
+          <button className="primary-button" type="button" onClick={onClose}>
+            开始上手
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -723,6 +913,17 @@ function Settings() {
     setError("");
   };
 
+  const choosePreset = (presetId: PresetId) => {
+    const preset = PRESET_DEFINITIONS.find(({ id }) => id === presetId);
+    if (preset === undefined) return;
+    const next = applyPreset(preferences, presetId);
+    savePreferences(next);
+    setPreferences(next);
+    setMaPeriods(preset.maPeriods.join(", "));
+    setMessage(`已套用「${preset.label}」并保存`);
+    setError("");
+  };
+
   return (
     <section className="settings-page page-stack">
       <div className="page-heading">
@@ -745,6 +946,26 @@ function Settings() {
             </div>
             <small>INDICATORS</small>
           </header>
+          <div className="preset-panel">
+            <div>
+              <strong>新手推荐参数</strong>
+              <p>先选一个观察模板，之后仍可逐项调整。</p>
+            </div>
+            <div className="preset-grid">
+              {PRESET_DEFINITIONS.map((preset) => (
+                <button
+                  className="preset-button"
+                  key={preset.id}
+                  type="button"
+                  aria-label={`套用${preset.label}`}
+                  onClick={() => choosePreset(preset.id)}
+                >
+                  <strong>{preset.label}</strong>
+                  <small>{preset.description}</small>
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="indicator-toggles">
             {(
               [
@@ -913,6 +1134,8 @@ function Settings() {
             />
           </div>
         </section>
+
+        <IndicatorGlossary />
 
         <section className="settings-card">
           <header>

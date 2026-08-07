@@ -4,6 +4,7 @@ import { indicatorLabel, isIndicatorSeriesEnabled } from "./indicator-contract";
 export interface ChartSelection {
   overlays: string[];
   oscillator: string;
+  focusIndicator?: string | null;
 }
 
 interface TerminalSeries {
@@ -52,8 +53,9 @@ export function buildKlineOption(
             connectNulls: false,
             lineStyle: {
               color: indicatorColor(key, indicatorConfig),
-              width: 1.2,
+              width: selection.focusIndicator === key ? 2.8 : 1.2,
             },
+            z: selection.focusIndicator === key ? 4 : 2,
           },
         ];
   });
@@ -71,11 +73,14 @@ export function buildKlineOption(
               yAxisIndex: 2,
               data: oscillator.values,
               itemStyle: {
+                opacity:
+                  selection.focusIndicator === selection.oscillator ? 1 : 0.72,
                 color: ({ value }: { value: unknown }) =>
                   typeof value === "number" && value < 0
                     ? indicatorConfig.macd.negativeColor
                     : indicatorConfig.macd.positiveColor,
               },
+              z: selection.focusIndicator === selection.oscillator ? 4 : 2,
             },
           ]
         : [
@@ -89,8 +94,10 @@ export function buildKlineOption(
               connectNulls: false,
               lineStyle: {
                 color: indicatorColor(selection.oscillator, indicatorConfig),
-                width: 1.2,
+                width:
+                  selection.focusIndicator === selection.oscillator ? 2.8 : 1.2,
               },
+              z: selection.focusIndicator === selection.oscillator ? 4 : 2,
             },
           ];
   const volumeMa = analysis.indicators.series.volumeMa20;
@@ -107,8 +114,9 @@ export function buildKlineOption(
             connectNulls: false,
             lineStyle: {
               color: indicatorConfig.volumeMa20.color,
-              width: 1.2,
+              width: selection.focusIndicator === "volumeMa20" ? 2.8 : 1.2,
             },
+            z: selection.focusIndicator === "volumeMa20" ? 4 : 2,
           },
         ]
       : [];

@@ -12,6 +12,39 @@ export interface IndicatorPresentation {
   oscillators: string[];
 }
 
+/** Map backend evidence names to the closest visible chart series. */
+export function metricToIndicatorKey(metric: string): string | null {
+  const normalized = metric.toLowerCase();
+  const compact = normalized.replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
+  const maMatch = /(?:^|[^a-z])ma[_-]?(\d+)/i.exec(metric);
+  if (maMatch !== null) return `ma${maMatch[1]}`;
+  if (compact.includes("macdhist") || compact.includes("macd柱"))
+    return "macdHistogram";
+  if (compact.includes("macddif")) return "macdDif";
+  if (compact.includes("macddea")) return "macdDea";
+  if (compact.includes("macd")) return "macdDif";
+  if (compact.includes("rsi")) return "rsi";
+  if (compact.includes("kdjk")) return "kdjK";
+  if (compact.includes("kdjd")) return "kdjD";
+  if (compact.includes("kdjj")) return "kdjJ";
+  if (compact.includes("boll") || compact.includes("布林")) return "bollMiddle";
+  if (compact.includes("atr")) return "atr";
+  if (
+    compact.includes("volume") ||
+    compact.includes("成交量") ||
+    compact.includes("均量")
+  )
+    return "volumeMa20";
+  if (
+    compact.includes("position") ||
+    compact.includes("price") ||
+    compact.includes("support") ||
+    compact.includes("resistance")
+  )
+    return "ma20";
+  return null;
+}
+
 export function indicatorPresentation(
   config: IndicatorConfig,
 ): IndicatorPresentation {

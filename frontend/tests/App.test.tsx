@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../src/App";
+import { ONBOARDING_STORAGE_KEY } from "../src/beginner";
 import { defaultPreferences, STORAGE_KEY } from "../src/storage";
 import type { AnalysisResponse } from "../src/types";
 
@@ -170,6 +171,17 @@ describe("App routes", () => {
     expect(await screen.findByText("2026-07-29")).toBeInTheDocument();
   });
 
+  it("shows a first-visit guide and remembers when it is dismissed", () => {
+    renderApp();
+
+    expect(
+      screen.getByRole("dialog", { name: "先用 3 步看懂一张 K 线图" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "开始上手" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("seen");
+  });
+
   it("runs a watchlist scan, renders progress and failures, and retries one row", () => {
     const preferences = defaultPreferences();
     preferences.watchlist = ["000001", "600000"];
@@ -323,6 +335,19 @@ describe("App routes", () => {
     });
   });
 
+  it("lets a beginner locate an evidence metric on the chart", async () => {
+    renderApp("/stocks/000001");
+    await screen.findByRole("heading", { name: "平安银行" });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "定位图表：后端证据：靠近区间上沿",
+      }),
+    );
+
+    expect(screen.getByText(/已定位到 MA20/)).toBeInTheDocument();
+  });
+
   it("switches analysis range and exposes overlays and oscillator controls", async () => {
     renderApp("/stocks/000001");
     await screen.findByRole("heading", { name: "平安银行" });
@@ -362,6 +387,24 @@ describe("App routes", () => {
     expect(screen.getByText("设置已保存")).toBeInTheDocument();
     expect(screen.getAllByText("实际占比")).toHaveLength(2);
     expect(localStorage.getItem(STORAGE_KEY)).toContain('"periods":[5,20,60]');
+  });
+
+  it("applies a beginner preset and saves its analysis choices", () => {
+    renderApp("/settings");
+
+    fireEvent.click(screen.getByRole("button", { name: "套用短线入门" }));
+
+    expect(screen.getByLabelText("MA 周期")).toHaveValue("5, 10, 20");
+    expect(screen.getByText("已套用「短线入门」并保存")).toBeInTheDocument();
+    expect(
+      JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}").scoreWeights,
+    ).toEqual({
+      trend: 25,
+      momentum: 40,
+      volumePrice: 20,
+      position: 10,
+      risk: 5,
+    });
   });
 
   it("persists indicator visibility, colors, and the full built-in parameters", () => {

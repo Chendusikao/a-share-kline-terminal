@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
+async function dismissBeginnerGuide(page: Page) {
+  const button = page.getByRole("button", { name: "开始上手" });
+  if (await button.isVisible().catch(() => false)) {
+    await button.click();
+  }
+}
+
 async function installMockApi(page: Page) {
   let scanStarted = false;
   const dates = Array.from({ length: 90 }, (_, index) => {
@@ -197,6 +204,7 @@ test("production server exposes health and the terminal shell", async ({
   await expect(healthResponse.json()).resolves.toEqual({ status: "ok" });
 
   await page.goto("/");
+  await dismissBeginnerGuide(page);
 
   await expect(page.getByRole("heading", { name: "自选扫描" })).toBeVisible();
   await expect(page.getByRole("searchbox", { name: "搜索股票" })).toBeVisible();
@@ -209,6 +217,7 @@ test("offline backend serves the real API contract for analysis and scanning", a
   page,
 }) => {
   await page.goto("/");
+  await dismissBeginnerGuide(page);
 
   await page.getByRole("searchbox", { name: "搜索股票" }).fill("000001");
   await page.getByRole("link", { name: /平安银行/ }).click();
@@ -235,6 +244,7 @@ test("mocked user journey keeps analysis, settings, watchlist and scan state in 
 }) => {
   await installMockApi(page);
   await page.goto("/");
+  await dismissBeginnerGuide(page);
 
   await page.getByRole("searchbox", { name: "搜索股票" }).fill("000001");
   await page.getByRole("link", { name: /平安银行/ }).click();
